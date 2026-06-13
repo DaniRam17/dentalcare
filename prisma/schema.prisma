@@ -1,0 +1,360 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// DentalCare Pro - Prisma schema adaptado al UML de diseño mejorado.
+// Se conservan nombres existentes en inglés para no romper frontend/backend actual.
+
+model Employee {
+  id              String    @id @default(uuid())
+  firstName       String
+  lastName        String
+  documentId      String    @unique
+  email           String    @unique
+  password        String
+  phone           String?
+  address         String?
+  role            Role      @default(RECEPTIONIST)
+  salary          Float?
+  contractDate    DateTime  @default(now())
+  licenseNumber   String?   // numeroColegiado para odontólogos
+  failedAttempts  Int       @default(0)
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  patients        Patient[]      @relation("DoctorPatients")
+  appointments    Appointment[]  @relation("DoctorAppointments")
+  procedures      ProcedureLog[] @relation("DoctorProcedures")
+  clinicalNotes   ClinicalHistory[]
+  shifts          ShiftAssignment[]
+  auditLogs       AuditLog[]
+  prescriptions   Prescription[]
+  specialties     Specialty[] @relation("DoctorSpecialties")
+}
+
+enum Role {
+  ADMIN
+  DOCTOR
+  RECEPTIONIST
+  NURSE
+}
+
+model Patient {
+  id              String    @id @default(uuid())
+  firstName       String
+  lastName        String
+  birthDate       DateTime
+  gender          String
+  documentType    String
+  documentNumber  String    @unique
+  address         String?
+  phone           String
+  email           String?
+  isActive        Boolean   @default(true)
+
+  // DatosSalud existentes conservados para compatibilidad
+  allergies       String?
+  chronicDiseases String?
+  medications     String?
+  familyHistory   String?
+
+  doctorId        String?
+  doctor          Employee? @relation("DoctorPatients", fields: [doctorId], references: [id])
+  responsibleId   String?
+  responsible     Responsible? @relation(fields: [responsibleId], references: [id])
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  appointments    Appointment[]
+  prescriptions   Prescription[]
+  procedures      ProcedureLog[]
+  clinicalHistory ClinicalHistory[]
+  files           PatientFile[]
+  invoices        Invoice[]
+  consents        Consent[]
+}
+
+model Responsible {
+  id              String   @id @default(uuid())
+  firstName       String
+  lastName        String
+  relationship    String
+  phone           String
+  email           String?
+  documentNumber  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  patients        Patient[]
+}
+
+model ClinicalHistory {
+  id                  String   @id @default(uuid())
+  date                DateTime @default(now())
+  diagnosis           String
+  treatmentPerformed  String?
+  observations        String?
+
+  patientId           String
+  patient             Patient @relation(fields: [patientId], references: [id])
+
+  odontologistId      String?
+  odontologist        Employee? @relation(fields: [odontologistId], references: [id])
+
+  appointmentId       String?
+  appointment         Appointment? @relation(fields: [appointmentId], references: [id])
+
+  procedureLogId      String?
+  procedureLog        ProcedureLog? @relation(fields: [procedureLogId], references: [id])
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model PatientFile {
+  id              String   @id @default(uuid())
+  fileName        String
+  fileType        String
+  fileUrl         String
+  uploadedAt      DateTime @default(now())
+
+  patientId       String
+  patient         Patient @relation(fields: [patientId], references: [id])
+}
+
+model Appointment {
+  id              String    @id @default(uuid())
+  date            DateTime
+  startTime       String?
+  endTime         String?
+  durationMinutes Int?
+  status          AppointmentStatus @default(SCHEDULED)
+  type            String
+  description     String?
+  diagnosis       String?
+  treatment       String?
+  observations    String?
+
+  patientId       String
+  patient         Patient   @relation(fields: [patientId], references: [id])
+  doctorId        String
+  doctor          Employee  @relation("DoctorAppointments", fields: [doctorId], references: [id])
+
+  notifications   Notification[]
+  clinicalHistory ClinicalHistory[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([doctorId, date])
+  @@index([patientId, date])
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  ATTENDED
+  CANCELLED
+  RESCHEDULED
+  NO_SHOW
+}
+
+model Prescription {
+  id              String    @id @default(uuid())
+  correlative     Int       @unique
+  date            DateTime  @default(now())
+  status          String    @default("ACTIVE")
+  patientId       String
+  patient         Patient   @relation(fields: [patientId], references: [id])
+  doctorId        String
+  doctor          Employee  @relation(fields: [doctorId], references: [id])
+  items           PrescriptionItem[]
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+model PrescriptionItem {
+  id              String    @id @default(uuid())
+  drugName        String
+  presentation    String
+  dosage          String
+  frequency       String
+  duration        String
+  prescriptionId  String
+  prescription    Prescription @relation(fields: [prescriptionId], references: [id])
+}
+
+model ProcedureType {
+  id              String    @id @default(uuid())
+  name            String    @unique
+  description     String?
+  price           Float
+  risks           String?
+  isActive        Boolean   @default(true)
+  logs            ProcedureLog[]
+  supplies        ProcedureSupply[]
+}
+
+model ProcedureLog {
+  id              String    @id @default(uuid())
+  date            DateTime  @default(now())
+  anesthesiaType  String?
+  notes           String?
+  status          ProcedureStatus @default(COMPLETED)
+
+  procedureTypeId String
+  procedureType   ProcedureType @relation(fields: [procedureTypeId], references: [id])
+  patientId       String
+  patient         Patient       @relation(fields: [patientId], references: [id])
+  doctorId        String
+  doctor          Employee      @relation("DoctorProcedures", fields: [doctorId], references: [id])
+
+  consent         Consent?
+  invoiceId       String?
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+  clinicalHistory ClinicalHistory[]
+}
+
+enum ProcedureStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+model Consent {
+  id              String   @id @default(uuid())
+  signedAt        DateTime @default(now())
+  description     String
+  documentUrl     String?
+  status          String   @default("SIGNED")
+
+  patientId       String
+  patient         Patient @relation(fields: [patientId], references: [id])
+
+  procedureLogId  String? @unique
+  procedureLog    ProcedureLog? @relation(fields: [procedureLogId], references: [id])
+}
+
+model Shift {
+  id              String    @id @default(uuid())
+  name            String
+  startTime       String
+  endTime         String
+  isActive        Boolean   @default(true)
+  assignments     ShiftAssignment[]
+}
+
+model ShiftAssignment {
+  id              String    @id @default(uuid())
+  date            DateTime
+  status          String    @default("ACTIVE")
+  employeeId      String
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  shiftId         String
+  shift           Shift     @relation(fields: [shiftId], references: [id])
+
+  @@unique([date, employeeId, shiftId])
+}
+
+model Specialty {
+  id          String @id @default(uuid())
+  name        String @unique
+  description String?
+  doctors     Employee[] @relation("DoctorSpecialties")
+}
+
+model Invoice {
+  id            String   @id @default(uuid())
+  invoiceNumber String   @unique
+  issueDate     DateTime @default(now())
+  subtotal      Float
+  tax           Float    @default(0)
+  total         Float
+  status        String   @default("PENDING")
+
+  patientId     String
+  patient       Patient @relation(fields: [patientId], references: [id])
+
+  procedureLogs ProcedureLog[]
+  payments      Payment[]
+}
+
+model Payment {
+  id            String   @id @default(uuid())
+  paymentDate   DateTime @default(now())
+  amount        Float
+  paymentMethod String
+  status        String   @default("PAID")
+
+  invoiceId     String
+  invoice       Invoice @relation(fields: [invoiceId], references: [id])
+}
+
+model InventoryItem {
+  id                String @id @default(uuid())
+  name              String @unique
+  description       String?
+  quantityAvailable Int    @default(0)
+  minimumStock      Int    @default(0)
+  unitOfMeasure     String
+
+  movements         InventoryMovement[]
+  procedures        ProcedureSupply[]
+}
+
+model InventoryMovement {
+  id            String   @id @default(uuid())
+  movementType  String
+  quantity      Int
+  movementDate  DateTime @default(now())
+  reason        String?
+
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+}
+
+model ProcedureSupply {
+  id              String @id @default(uuid())
+  quantityRequired Int @default(1)
+  procedureTypeId String
+  procedureType   ProcedureType @relation(fields: [procedureTypeId], references: [id])
+  inventoryItemId String
+  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([procedureTypeId, inventoryItemId])
+}
+
+model Notification {
+  id              String   @id @default(uuid())
+  type            String
+  message         String
+  sentAt          DateTime?
+  status          String   @default("PENDING")
+
+  appointmentId   String?
+  appointment     Appointment? @relation(fields: [appointmentId], references: [id])
+
+  createdAt       DateTime @default(now())
+}
+
+model AuditLog {
+  id              String    @id @default(uuid())
+  action          String
+  entity          String
+  entityId        String
+  details         String?
+  beforeData      String?
+  afterData       String?
+  ipAddress       String?
+  timestamp       DateTime  @default(now())
+  userId          String?
+  user            Employee? @relation(fields: [userId], references: [id])
+}

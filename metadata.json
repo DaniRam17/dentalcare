@@ -1,0 +1,5 @@
+{
+  "name": "DentalCare Pro - Sistema de Gestión Odontológica",
+  "description": "Plataforma integral para la gestión de clínicas odontológicas, incluyendo pacientes, citas, recetas, procedimientos, empleados y turnos con control de acceso basado en roles (RBAC).",
+  "requestFramePermissions": []
+}

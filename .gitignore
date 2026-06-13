@@ -1,0 +1,35 @@
+# Node modules
+node_modules/
+.pnpm-store/
+
+# Environment variables and secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Build and runtime outputs
+dist/
+build/
+coverage/
+.cache/
+.turbo/
+
+# Uploaded files and temporary storage
+uploads/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Database files
+prisma/*.db
+prisma/*.db-journal
+*.sqlite
+*.sqlite3
