@@ -29,6 +29,8 @@ Variables obligatorias:
 
 > Importante: `.env` no debe subirse al repositorio. El archivo `.env.example` es el único archivo de entorno de ejemplo que se mantiene en el código.
 
+> Nota: Las claves secretas como `GEMINI_API_KEY` NO deben inyectarse en el frontend. Si implementas IA, el backend debe usar `process.env.GEMINI_API_KEY` y ofrecer solo resultados seguros al cliente.
+
 ## Qué ignora `.gitignore`
 
 - `node_modules/`
