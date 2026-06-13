@@ -13,10 +13,18 @@ export const Shifts: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     employeeId: '',
     shiftId: '',
     date: format(new Date(), 'yyyy-MM-dd'),
+  });
+  const [shiftForm, setShiftForm] = useState({
+    name: '',
+    startTime: '08:00',
+    endTime: '12:00',
+    daysOfWeek: 'Lunes a Viernes',
+    notes: '',
   });
 
   const fetchData = async () => {
@@ -52,6 +60,18 @@ export const Shifts: React.FC = () => {
     }
   };
 
+  const handleShiftSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await apiClient.post('/shifts', shiftForm);
+      setIsShiftModalOpen(false);
+      setShiftForm({ name: '', startTime: '08:00', endTime: '12:00', daysOfWeek: 'Lunes a Viernes', notes: '' });
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-8">
@@ -68,9 +88,14 @@ export const Shifts: React.FC = () => {
             <button onClick={() => setCurrentDate(addDays(currentDate, 1))} className="p-2 hover:bg-zinc-100 rounded-lg"><ChevronRight className="w-4 h-4" /></button>
           </div>
           {user?.role === 'ADMIN' && (
-            <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold">
-              <UserPlus className="w-4 h-4" /> Asignar Turno
-            </button>
+            <>
+              <button onClick={() => setIsShiftModalOpen(true)} className="bg-zinc-900 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold">
+                <Clock className="w-4 h-4" /> Nuevo Turno
+              </button>
+              <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold">
+                <UserPlus className="w-4 h-4" /> Asignar Turno
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -107,6 +132,27 @@ export const Shifts: React.FC = () => {
         </div>
       )}
 
+      {isShiftModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-xl overflow-hidden">
+            <div className="p-6 border-b flex justify-between items-center bg-zinc-50">
+              <h2 className="text-xl font-bold">Nuevo Turno</h2>
+              <button onClick={() => setIsShiftModalOpen(false)}><X className="w-6 h-6" /></button>
+            </div>
+            <form onSubmit={handleShiftSubmit} className="p-6 space-y-4">
+              <input required placeholder="Nombre del turno" className="w-full p-2 border rounded-lg" value={shiftForm.name} onChange={e => setShiftForm({ ...shiftForm, name: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <input required type="time" className="w-full p-2 border rounded-lg" value={shiftForm.startTime} onChange={e => setShiftForm({ ...shiftForm, startTime: e.target.value })} />
+                <input required type="time" className="w-full p-2 border rounded-lg" value={shiftForm.endTime} onChange={e => setShiftForm({ ...shiftForm, endTime: e.target.value })} />
+              </div>
+              <input placeholder="Dias de trabajo" className="w-full p-2 border rounded-lg" value={shiftForm.daysOfWeek} onChange={e => setShiftForm({ ...shiftForm, daysOfWeek: e.target.value })} />
+              <textarea placeholder="Notas" className="w-full p-2 border rounded-lg" value={shiftForm.notes} onChange={e => setShiftForm({ ...shiftForm, notes: e.target.value })} />
+              <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-2 rounded-lg">Guardar Turno</button>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {loading ? (
           <div className="col-span-full py-12 text-center text-zinc-400">Cargando asignaciones...</div>
@@ -125,9 +171,10 @@ export const Shifts: React.FC = () => {
                 <h3 className="font-bold text-zinc-900">{as.employee.firstName} {as.employee.lastName}</h3>
                 <p className="text-xs text-zinc-500 uppercase tracking-widest font-bold mb-1">{as.employee.role}</p>
                 <div className="flex items-center gap-2 text-sm text-zinc-600">
-                  <span className="px-2 py-0.5 bg-zinc-100 rounded font-medium">{as.shift.name}</span>
+                  <span className="px-2 py-0.5 bg-zinc-100 rounded font-medium">{as.shift.shiftCode || '-'} · {as.shift.name}</span>
                   <span>{as.shift.startTime} - {as.shift.endTime}</span>
                 </div>
+                <p className="text-xs text-zinc-400 mt-1">{as.shift.daysOfWeek || 'Dias no definidos'}</p>
               </div>
             </div>
           ))

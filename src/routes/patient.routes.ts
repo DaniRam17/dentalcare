@@ -6,19 +6,30 @@ import { z } from "zod";
 
 const router = Router();
 
+function parseLocalDate(value: string) {
+  const [year, month, day] = value.split("T")[0].split("-").map(Number);
+  return new Date(year, month - 1, day, 12, 0, 0, 0);
+}
+
+function listToText(value: unknown) {
+  if (Array.isArray(value)) return value.map(String).map((item) => item.trim()).filter(Boolean).join(", ");
+  return value;
+}
+
 const patientSchema = z.object({
   firstName: z.string().min(2),
   lastName: z.string().min(2),
-  birthDate: z.string().transform(val => new Date(val)),
+  birthDate: z.string().transform(parseLocalDate),
   gender: z.string(),
   documentType: z.string(),
   documentNumber: z.string(),
+  rtn: z.string().optional().nullable(),
   phone: z.string(),
   email: z.string().email().optional().nullable(),
   address: z.string().optional().nullable(),
   doctorId: z.string().optional().nullable(),
-  allergies: z.string().optional().nullable(),
-  chronicDiseases: z.string().optional().nullable(),
+  allergies: z.preprocess(listToText, z.string().optional().nullable()),
+  chronicDiseases: z.preprocess(listToText, z.string().optional().nullable()),
   medications: z.string().optional().nullable(),
   familyHistory: z.string().optional().nullable(),
 });
@@ -32,9 +43,12 @@ router.get("/", authenticate, async (req, res, next) => {
     const where: any = { isActive: true };
     if (search) {
       where.OR = [
+        { patientCode: { contains: String(search), mode: 'insensitive' } },
         { firstName: { contains: String(search), mode: 'insensitive' } },
         { lastName: { contains: String(search), mode: 'insensitive' } },
         { documentNumber: { contains: String(search) } },
+        { rtn: { contains: String(search) } },
+        { phone: { contains: String(search) } },
       ];
     }
     if (doctorId) where.doctorId = String(doctorId);
@@ -66,14 +80,17 @@ router.get("/", authenticate, async (req, res, next) => {
 router.post("/", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), async (req: any, res, next) => {
   try {
     const data = patientSchema.parse(req.body);
+    const patientCode = await nextPatientCode();
     const patient = await prisma.patient.create({ 
       data: { 
+        patientCode,
         firstName: data.firstName,
         lastName: data.lastName,
         birthDate: data.birthDate,
         gender: data.gender,
         documentType: data.documentType,
         documentNumber: data.documentNumber,
+        rtn: data.rtn,
         phone: data.phone,
         email: data.email,
         address: data.address,
@@ -123,3 +140,13 @@ router.delete("/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, 
 });
 
 export default router;
+
+async function nextPatientCode() {
+  const last = await prisma.patient.findFirst({
+    where: { patientCode: { not: null } },
+    orderBy: { patientCode: "desc" },
+    select: { patientCode: true },
+  });
+  const next = Number(last?.patientCode?.replace("PAC-", "") || "0") + 1;
+  return `PAC-${String(next).padStart(6, "0")}`;
+}

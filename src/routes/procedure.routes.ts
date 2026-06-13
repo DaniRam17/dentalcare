@@ -9,8 +9,11 @@ const router = Router();
 const procedureTypeSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
-  price: z.number().positive(),
+  price: z.number().nonnegative(),
   risks: z.string().optional(),
+  category: z.string().optional().nullable(),
+  estimatedDuration: z.number().int().positive().optional().nullable(),
+  taxType: z.enum(["EXEMPT", "ISV_15", "ISV_18"]).default("ISV_15"),
 });
 
 const procedureLogSchema = z.object({
@@ -26,7 +29,15 @@ const procedureLogSchema = z.object({
 // --- Procedure Types (Catalog) ---
 router.get("/types", authenticate, async (req, res, next) => {
   try {
-    const types = await prisma.procedureType.findMany({ where: { isActive: true } });
+    const { search } = req.query;
+    const where: any = { isActive: true };
+    if (search) {
+      where.OR = [
+        { procedureCode: { contains: String(search), mode: "insensitive" } },
+        { name: { contains: String(search), mode: "insensitive" } },
+      ];
+    }
+    const types = await prisma.procedureType.findMany({ where, orderBy: { procedureCode: "asc" } });
     res.json(types);
   } catch (error) {
     next(error);
@@ -36,7 +47,8 @@ router.get("/types", authenticate, async (req, res, next) => {
 router.post("/types", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
   try {
     const data = procedureTypeSchema.parse(req.body);
-    const type = await prisma.procedureType.create({ data });
+    const procedureCode = await nextProcedureCode();
+    const type = await prisma.procedureType.create({ data: { ...data, procedureCode } });
     await logAudit("CREATE", "ProcedureType", type.id, req.user.id);
     res.status(201).json(type);
   } catch (error) {
@@ -108,3 +120,13 @@ router.post("/logs", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: a
 });
 
 export default router;
+
+async function nextProcedureCode() {
+  const last = await prisma.procedureType.findFirst({
+    where: { procedureCode: { not: null } },
+    orderBy: { procedureCode: "desc" },
+    select: { procedureCode: true },
+  });
+  const next = Number(last?.procedureCode?.replace("PROC-", "") || "0") + 1;
+  return `PROC-${String(next).padStart(6, "0")}`;
+}

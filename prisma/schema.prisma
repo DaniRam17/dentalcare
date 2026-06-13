@@ -47,12 +47,14 @@ enum Role {
 
 model Patient {
   id              String    @id @default(uuid())
+  patientCode     String?   @unique
   firstName       String
   lastName        String
   birthDate       DateTime
   gender          String
   documentType    String
   documentNumber  String    @unique
+  rtn             String?
   address         String?
   phone           String
   email           String?
@@ -76,6 +78,7 @@ model Patient {
   prescriptions   Prescription[]
   procedures      ProcedureLog[]
   clinicalHistory ClinicalHistory[]
+  clinicalProcedures ClinicalHistoryProcedure[]
   files           PatientFile[]
   invoices        Invoice[]
   consents        Consent[]
@@ -98,9 +101,11 @@ model Responsible {
 model ClinicalHistory {
   id                  String   @id @default(uuid())
   date                DateTime @default(now())
+  reason              String?
   diagnosis           String
   treatmentPerformed  String?
   observations        String?
+  status              String   @default("ACTIVE")
 
   patientId           String
   patient             Patient @relation(fields: [patientId], references: [id])
@@ -113,6 +118,9 @@ model ClinicalHistory {
 
   procedureLogId      String?
   procedureLog        ProcedureLog? @relation(fields: [procedureLogId], references: [id])
+  employeeId          String?
+  shiftAssignmentId   String?
+  procedures          ClinicalHistoryProcedure[]
 
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
@@ -131,6 +139,7 @@ model PatientFile {
 
 model Appointment {
   id              String    @id @default(uuid())
+  appointmentCode String?   @unique
   date            DateTime
   startTime       String?
   endTime         String?
@@ -146,6 +155,8 @@ model Appointment {
   patient         Patient   @relation(fields: [patientId], references: [id])
   doctorId        String
   doctor          Employee  @relation("DoctorAppointments", fields: [doctorId], references: [id])
+  procedureTypeId String?
+  procedureType   ProcedureType? @relation(fields: [procedureTypeId], references: [id])
 
   notifications   Notification[]
   clinicalHistory ClinicalHistory[]
@@ -194,13 +205,19 @@ model PrescriptionItem {
 
 model ProcedureType {
   id              String    @id @default(uuid())
+  procedureCode   String?   @unique
   name            String    @unique
   description     String?
   price           Float
   risks           String?
+  category        String?
+  estimatedDuration Int?
+  taxType         String    @default("ISV_15")
   isActive        Boolean   @default(true)
   logs            ProcedureLog[]
   supplies        ProcedureSupply[]
+  appointments    Appointment[]
+  clinicalProcedures ClinicalHistoryProcedure[]
 }
 
 model ProcedureLog {
@@ -223,6 +240,36 @@ model ProcedureLog {
   clinicalHistory ClinicalHistory[]
 }
 
+model ClinicalHistoryProcedure {
+  id              String   @id @default(uuid())
+  procedureCode   String
+  procedureName   String
+  price           Float
+  taxType         String   @default("ISV_15")
+  billingStatus   String   @default("PENDING")
+  performedAt     DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  clinicalHistoryId String
+  clinicalHistory   ClinicalHistory @relation(fields: [clinicalHistoryId], references: [id])
+
+  patientId       String
+  patient         Patient @relation(fields: [patientId], references: [id])
+
+  procedureTypeId String
+  procedureType   ProcedureType @relation(fields: [procedureTypeId], references: [id])
+
+  performedById   String?
+  invoiceId       String?
+  invoice         Invoice? @relation(fields: [invoiceId], references: [id])
+
+  invoiceItems    InvoiceItem[]
+
+  @@index([patientId, billingStatus])
+  @@index([clinicalHistoryId])
+}
+
 enum ProcedureStatus {
   PENDING
   COMPLETED
@@ -234,6 +281,8 @@ model Consent {
   signedAt        DateTime @default(now())
   description     String
   documentUrl     String?
+  signerName      String?
+  signatureDataUrl String?
   status          String   @default("SIGNED")
 
   patientId       String
@@ -245,9 +294,12 @@ model Consent {
 
 model Shift {
   id              String    @id @default(uuid())
+  shiftCode       String?   @unique
   name            String
   startTime       String
   endTime         String
+  daysOfWeek      String?
+  notes           String?
   isActive        Boolean   @default(true)
   assignments     ShiftAssignment[]
 }
@@ -255,6 +307,7 @@ model Shift {
 model ShiftAssignment {
   id              String    @id @default(uuid())
   date            DateTime
+  endDate         DateTime?
   status          String    @default("ACTIVE")
   employeeId      String
   employee        Employee  @relation(fields: [employeeId], references: [id])
@@ -273,7 +326,31 @@ model Specialty {
 
 model Invoice {
   id            String   @id @default(uuid())
+  invoiceCode   String?  @unique
   invoiceNumber String   @unique
+  fiscalNumber  String?  @unique
+  cai           String?
+  rangeStart    Int?
+  rangeEnd      Int?
+  emissionDeadline DateTime?
+  customerName  String?
+  customerIdentity String?
+  customerRtn   String?
+  customerAddress String?
+  taxable15     Float    @default(0)
+  taxable18     Float    @default(0)
+  exemptAmount  Float    @default(0)
+  exoneratedAmount Float  @default(0)
+  isv15         Float    @default(0)
+  isv18         Float    @default(0)
+  discountTotal Float    @default(0)
+  totalInWords  String?
+  paymentMethod String?
+  notes         String?
+  createdById   String?
+  cancelledById String?
+  cancelledAt   DateTime?
+  cancellationReason String?
   issueDate     DateTime @default(now())
   subtotal      Float
   tax           Float    @default(0)
@@ -282,9 +359,63 @@ model Invoice {
 
   patientId     String
   patient       Patient @relation(fields: [patientId], references: [id])
+  fiscalRangeId String?
+  fiscalRange   FiscalDocumentRange? @relation(fields: [fiscalRangeId], references: [id])
 
+  items         InvoiceItem[]
   procedureLogs ProcedureLog[]
+  clinicalProcedures ClinicalHistoryProcedure[]
   payments      Payment[]
+}
+
+model InvoiceItem {
+  id              String   @id @default(uuid())
+  description     String
+  itemType        String
+  itemCode        String?
+  quantity        Int      @default(1)
+  unitPrice       Float
+  discount        Float    @default(0)
+  taxType         String   @default("ISV_15")
+  taxRate         Float    @default(0.15)
+  taxAmount       Float    @default(0)
+  taxable         Boolean  @default(true)
+  tax             Float    @default(0)
+  total           Float
+
+  invoiceId       String
+  invoice         Invoice @relation(fields: [invoiceId], references: [id])
+
+  procedureLogId  String?
+  clinicalHistoryProcedureId String?
+  clinicalHistoryProcedure ClinicalHistoryProcedure? @relation(fields: [clinicalHistoryProcedureId], references: [id])
+  inventoryItemId String?
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+}
+
+model FiscalDocumentRange {
+  id                String   @id @default(uuid())
+  documentType      String
+  cai               String
+  establishmentCode String
+  emissionPointCode String
+  documentTypeCode  String
+  prefix            String?
+  startNumber       Int
+  endNumber         Int
+  currentNumber     Int      @default(0)
+  nextNumber        Int
+  authorizationDate DateTime
+  emissionDeadline  DateTime
+  status            String   @default("ACTIVE")
+  notes             String?
+  createdById       String?
+  updatedById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  invoices          Invoice[]
+
+  @@index([documentType, status])
 }
 
 model Payment {
@@ -292,6 +423,8 @@ model Payment {
   paymentDate   DateTime @default(now())
   amount        Float
   paymentMethod String
+  reference      String?
+  processor      String?
   status        String   @default("PAID")
 
   invoiceId     String
@@ -305,9 +438,12 @@ model InventoryItem {
   quantityAvailable Int    @default(0)
   minimumStock      Int    @default(0)
   unitOfMeasure     String
+  unitPrice         Float   @default(0)
+  taxable           Boolean @default(true)
 
   movements         InventoryMovement[]
   procedures        ProcedureSupply[]
+  invoiceItems      InvoiceItem[]
 }
 
 model InventoryMovement {

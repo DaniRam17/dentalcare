@@ -10,13 +10,15 @@ export const Appointments: React.FC = () => {
   const [appointments, setAppointments] = useState<any[]>([]);
   const [patients, setPatients] = useState<any[]>([]);
   const [doctors, setDoctors] = useState<any[]>([]);
+  const [procedureTypes, setProcedureTypes] = useState<any[]>([]);
   const [currentDate, setCurrentDate] = useState(new Date());
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     patientId: '',
     doctorId: '',
-    date: format(new Date(), "yyyy-MM-dd'T'HH:mm"),
+    procedureTypeId: '',
+    date: format(new Date(), "yyyy-MM-dd"),
     type: 'CONSULTATION',
     description: '',
   });
@@ -24,14 +26,16 @@ export const Appointments: React.FC = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [aptRes, patRes, docRes] = await Promise.all([
+      const [aptRes, patRes, docRes, procRes] = await Promise.all([
         apiClient.get(`/appointments?date=${format(currentDate, 'yyyy-MM-dd')}`),
         apiClient.get('/patients'),
-        apiClient.get('/employees?role=DOCTOR')
+        apiClient.get('/employees?role=DOCTOR'),
+        apiClient.get('/procedures/types')
       ]);
       setAppointments(aptRes);
       setPatients(patRes.data);
       setDoctors(docRes);
+      setProcedureTypes(procRes);
     } catch (err) {
       console.error(err);
     } finally {
@@ -46,7 +50,7 @@ export const Appointments: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await apiClient.post('/appointments', formData);
+      await apiClient.post('/appointments', { ...formData, procedureTypeId: formData.procedureTypeId || null });
       setIsModalOpen(false);
       fetchData();
     } catch (err: any) {
@@ -91,7 +95,7 @@ export const Appointments: React.FC = () => {
                 <label className="text-sm font-medium">Paciente</label>
                 <select required className="w-full p-2 border rounded-lg" value={formData.patientId} onChange={e => setFormData({...formData, patientId: e.target.value})}>
                   <option value="">Seleccionar paciente...</option>
-                  {patients.map(p => <option key={p.id} value={p.id}>{p.firstName} {p.lastName}</option>)}
+                  {patients.map(p => <option key={p.id} value={p.id}>{p.patientCode || 'SIN-COD'} - {p.firstName} {p.lastName}</option>)}
                 </select>
               </div>
               <div className="space-y-1">
@@ -102,8 +106,15 @@ export const Appointments: React.FC = () => {
                 </select>
               </div>
               <div className="space-y-1">
-                <label className="text-sm font-medium">Fecha y Hora</label>
-                <input required type="datetime-local" className="w-full p-2 border rounded-lg" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+                <label className="text-sm font-medium">Fecha</label>
+                <input required type="date" className="w-full p-2 border rounded-lg" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Procedimiento</label>
+                <select className="w-full p-2 border rounded-lg" value={formData.procedureTypeId} onChange={e => setFormData({...formData, procedureTypeId: e.target.value})}>
+                  <option value="">Sin procedimiento asociado</option>
+                  {procedureTypes.map(p => <option key={p.id} value={p.id}>{p.procedureCode || 'SIN-COD'} - {p.name}</option>)}
+                </select>
               </div>
               <div className="space-y-1">
                 <label className="text-sm font-medium">Tipo de Servicio</label>
@@ -137,13 +148,15 @@ export const Appointments: React.FC = () => {
                   <div className="flex gap-4">
                     <div className="w-16 h-16 bg-zinc-50 rounded-lg flex flex-col items-center justify-center border border-zinc-100">
                       <Clock className="w-4 h-4 text-zinc-400 mb-1" />
-                      <span className="text-sm font-bold text-zinc-900">{format(new Date(apt.date), 'HH:mm')}</span>
+                      <span className="text-xs font-bold text-zinc-900 text-center">{format(new Date(apt.date), 'dd/MM/yyyy')}</span>
                     </div>
                     <div>
+                      <p className="text-xs font-mono text-emerald-700">{apt.appointmentCode || '-'}</p>
                       <h3 className="font-bold text-zinc-900">{apt.patient.firstName} {apt.patient.lastName}</h3>
                       <div className="flex items-center gap-4 mt-1">
                         <span className="flex items-center gap-1 text-xs text-zinc-500"><Stethoscope className="w-3 h-3" /> Dr. {apt.doctor.lastName}</span>
                         <span className="flex items-center gap-1 text-xs text-zinc-500 uppercase tracking-wider">{apt.type}</span>
+                        {apt.procedureType && <span className="flex items-center gap-1 text-xs text-zinc-500">{apt.procedureType.procedureCode} - {apt.procedureType.name}</span>}
                       </div>
                     </div>
                   </div>

@@ -34,6 +34,7 @@ const Layout: React.FC = () => {
           <Route path="/clinical-history" element={<IntegratedModulePage moduleKey="clinical-history" />} />
           <Route path="/clinical-files" element={<IntegratedModulePage moduleKey="clinical-files" />} />
           <Route path="/billing" element={<IntegratedModulePage moduleKey="billing" />} />
+          <Route path="/billing/settings" element={<IntegratedModulePage moduleKey="fiscal-ranges" />} />
           <Route path="/payments" element={<IntegratedModulePage moduleKey="payments" />} />
           <Route path="/inventory" element={<IntegratedModulePage moduleKey="inventory" />} />
           <Route path="/consents" element={<IntegratedModulePage moduleKey="consents" />} />

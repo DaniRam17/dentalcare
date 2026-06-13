@@ -15,11 +15,15 @@ export const Patients: React.FC = () => {
     lastName: '',
     documentType: 'DNI',
     documentNumber: '',
+    rtn: '',
     birthDate: '',
     gender: 'Masculino',
     phone: '',
     email: '',
+    allergies: [] as string[],
+    chronicDiseases: [] as string[],
   });
+  const [healthInputs, setHealthInputs] = useState({ allergies: '', chronicDiseases: '' });
 
   const fetchPatients = async () => {
     setLoading(true);
@@ -49,9 +53,10 @@ export const Patients: React.FC = () => {
       setIsModalOpen(false);
       setEditingPatient(null);
       setFormData({
-        firstName: '', lastName: '', documentType: 'DNI', documentNumber: '',
-        birthDate: '', gender: 'Masculino', phone: '', email: ''
+        firstName: '', lastName: '', documentType: 'DNI', documentNumber: '', rtn: '',
+        birthDate: '', gender: 'Masculino', phone: '', email: '', allergies: [], chronicDiseases: []
       });
+      setHealthInputs({ allergies: '', chronicDiseases: '' });
       fetchPatients();
     } catch (err: any) {
       alert(err.message);
@@ -75,12 +80,37 @@ export const Patients: React.FC = () => {
       lastName: p.lastName,
       documentType: p.documentType,
       documentNumber: p.documentNumber,
+      rtn: p.rtn || '',
       birthDate: p.birthDate.split('T')[0],
       gender: p.gender,
       phone: p.phone,
       email: p.email || '',
+      allergies: splitList(p.allergies),
+      chronicDiseases: splitList(p.chronicDiseases),
     });
+    setHealthInputs({ allergies: '', chronicDiseases: '' });
     setIsModalOpen(true);
+  };
+
+  const openNew = () => {
+    setEditingPatient(null);
+    setFormData({
+      firstName: '', lastName: '', documentType: 'DNI', documentNumber: '', rtn: '',
+      birthDate: '', gender: 'Masculino', phone: '', email: '', allergies: [], chronicDiseases: []
+    });
+    setHealthInputs({ allergies: '', chronicDiseases: '' });
+    setIsModalOpen(true);
+  };
+
+  const addHealthItem = (field: 'allergies' | 'chronicDiseases') => {
+    const value = healthInputs[field].trim();
+    if (!value) return;
+    setFormData({ ...formData, [field]: [...formData[field], value] });
+    setHealthInputs({ ...healthInputs, [field]: '' });
+  };
+
+  const removeHealthItem = (field: 'allergies' | 'chronicDiseases', index: number) => {
+    setFormData({ ...formData, [field]: formData[field].filter((_, itemIndex) => itemIndex !== index) });
   };
 
   return (
@@ -94,7 +124,7 @@ export const Patients: React.FC = () => {
         </div>
         {(user?.role === 'ADMIN' || user?.role === 'RECEPTIONIST') && (
           <button 
-            onClick={() => { setEditingPatient(null); setIsModalOpen(true); }}
+            onClick={openNew}
             className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm"
           >
             <UserPlus className="w-4 h-4" /> Nuevo Paciente
@@ -136,6 +166,10 @@ export const Patients: React.FC = () => {
                 <input required className="w-full p-2 border rounded-lg" value={formData.documentNumber} onChange={e => setFormData({...formData, documentNumber: e.target.value})} />
               </div>
               <div className="space-y-1">
+                <label className="text-sm font-medium text-zinc-700">RTN</label>
+                <input className="w-full p-2 border rounded-lg" value={formData.rtn} onChange={e => setFormData({...formData, rtn: e.target.value})} />
+              </div>
+              <div className="space-y-1">
                 <label className="text-sm font-medium text-zinc-700">Fecha Nacimiento</label>
                 <input required type="date" className="w-full p-2 border rounded-lg" value={formData.birthDate} onChange={e => setFormData({...formData, birthDate: e.target.value})} />
               </div>
@@ -155,6 +189,22 @@ export const Patients: React.FC = () => {
                 <label className="text-sm font-medium text-zinc-700">Email</label>
                 <input type="email" className="w-full p-2 border rounded-lg" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
               </div>
+              <ListField
+                label="Alergias"
+                value={healthInputs.allergies}
+                items={formData.allergies}
+                onValueChange={(value) => setHealthInputs({ ...healthInputs, allergies: value })}
+                onAdd={() => addHealthItem('allergies')}
+                onRemove={(index) => removeHealthItem('allergies', index)}
+              />
+              <ListField
+                label="Enfermedades de base"
+                value={healthInputs.chronicDiseases}
+                items={formData.chronicDiseases}
+                onValueChange={(value) => setHealthInputs({ ...healthInputs, chronicDiseases: value })}
+                onAdd={() => addHealthItem('chronicDiseases')}
+                onRemove={(index) => removeHealthItem('chronicDiseases', index)}
+              />
               <div className="md:col-span-2 flex justify-end gap-3 mt-4">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-zinc-600 hover:bg-zinc-100 rounded-lg">Cancelar</button>
                 <button type="submit" className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold">Guardar</button>
@@ -182,7 +232,8 @@ export const Patients: React.FC = () => {
           <table className="w-full text-left">
             <thead>
               <tr className="bg-zinc-50 text-zinc-500 text-xs uppercase tracking-wider font-semibold">
-                <th className="px-6 py-4">Paciente</th>
+              <th className="px-6 py-4">Codigo</th>
+              <th className="px-6 py-4">Paciente</th>
                 <th className="px-6 py-4">Documento</th>
                 <th className="px-6 py-4">Contacto</th>
                 <th className="px-6 py-4">Odontólogo</th>
@@ -191,12 +242,13 @@ export const Patients: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {loading ? (
-                <tr><td colSpan={5} className="px-6 py-8 text-center text-zinc-400">Cargando...</td></tr>
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-zinc-400">Cargando...</td></tr>
               ) : patients.length === 0 ? (
-                <tr><td colSpan={5} className="px-6 py-8 text-center text-zinc-400">No se encontraron pacientes</td></tr>
+                <tr><td colSpan={6} className="px-6 py-8 text-center text-zinc-400">No se encontraron pacientes</td></tr>
               ) : (
                 patients.map((p) => (
                   <tr key={p.id} className="hover:bg-zinc-50 transition-colors group">
+                    <td className="px-6 py-4 font-mono text-sm text-emerald-700">{p.patientCode || '-'}</td>
                     <td className="px-6 py-4">
                       <div className="font-medium text-zinc-900">{p.firstName} {p.lastName}</div>
                       <div className="text-xs text-zinc-500">{new Date(p.birthDate).toLocaleDateString()}</div>
@@ -233,3 +285,29 @@ export const Patients: React.FC = () => {
     </div>
   );
 };
+
+function splitList(value?: string) {
+  return String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function ListField({ label, value, items, onValueChange, onAdd, onRemove }: any) {
+  return (
+    <div className="space-y-2 md:col-span-2">
+      <label className="text-sm font-medium text-zinc-700">{label}</label>
+      <div className="flex gap-2">
+        <input className="w-full p-2 border rounded-lg" value={value} onChange={(event) => onValueChange(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); onAdd(); } }} />
+        <button type="button" onClick={onAdd} className="px-3 py-2 bg-zinc-900 text-white rounded-lg">Agregar</button>
+      </div>
+      {items.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {items.map((item: string, index: number) => (
+            <span key={`${item}-${index}`} className="inline-flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-700 rounded text-xs">
+              {item}
+              <button type="button" onClick={() => onRemove(index)}><X className="w-3 h-3" /></button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

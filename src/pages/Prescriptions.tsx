@@ -65,6 +65,14 @@ export const Prescriptions: React.FC = () => {
     }
   };
 
+  const downloadPdf = async (prescription: any) => {
+    try {
+      await apiClient.download(`/prescriptions/${prescription.id}/pdf`, `receta-${String(prescription.correlative).padStart(4, '0')}.pdf`);
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
   return (
     <div className="p-6">
       <div className="flex justify-between items-center mb-8">
@@ -147,7 +155,7 @@ export const Prescriptions: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-500">{new Date(p.date).toLocaleDateString()}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{p.items.length} items</td>
                 <td className="px-6 py-4 text-right">
-                  <button className="text-emerald-600 hover:underline text-sm font-bold">Ver PDF</button>
+                  <button onClick={() => downloadPdf(p)} className="text-emerald-600 hover:underline text-sm font-bold">Descargar PDF</button>
                 </td>
               </tr>
             ))}

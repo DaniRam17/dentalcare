@@ -6,13 +6,21 @@ import { z } from "zod";
 
 const router = Router();
 
+function parseLocalDate(value: string) {
+  const [datePart, timePart] = value.split("T");
+  const [year, month, day] = datePart.split("-").map(Number);
+  const [hour = 12, minute = 0] = (timePart || "").split(":").map(Number);
+  return new Date(year, month - 1, day, hour, minute, 0, 0);
+}
+
 const appointmentSchema = z.object({
-  date: z.string().transform(val => new Date(val)),
+  date: z.string().transform(parseLocalDate),
   startTime: z.string().optional(),
   endTime: z.string().optional(),
   durationMinutes: z.number().int().positive().optional(),
   patientId: z.string().uuid(),
   doctorId: z.string().uuid(),
+  procedureTypeId: z.string().uuid().optional().nullable(),
   type: z.string(),
   description: z.string().optional(),
   status: z.enum(["SCHEDULED", "CONFIRMED", "IN_PROGRESS", "ATTENDED", "CANCELLED", "RESCHEDULED", "NO_SHOW"]).optional(),
@@ -20,22 +28,32 @@ const appointmentSchema = z.object({
 
 router.get("/", authenticate, async (req, res, next) => {
   try {
-    const { doctorId, patientId, date, status } = req.query;
+    const { doctorId, patientId, date, status, search } = req.query;
     const where: any = {};
     if (doctorId) where.doctorId = String(doctorId);
     if (patientId) where.patientId = String(patientId);
     if (status) where.status = status;
+    if (search) {
+      where.OR = [
+        { appointmentCode: { contains: String(search), mode: "insensitive" } },
+        { patient: { firstName: { contains: String(search), mode: "insensitive" } } },
+        { patient: { lastName: { contains: String(search), mode: "insensitive" } } },
+        { patient: { patientCode: { contains: String(search), mode: "insensitive" } } },
+        { doctor: { firstName: { contains: String(search), mode: "insensitive" } } },
+        { doctor: { lastName: { contains: String(search), mode: "insensitive" } } },
+      ];
+    }
     if (date) {
-      const start = new Date(String(date));
+      const start = parseLocalDate(String(date));
       start.setHours(0, 0, 0, 0);
-      const end = new Date(String(date));
+      const end = parseLocalDate(String(date));
       end.setHours(23, 59, 59, 999);
       where.date = { gte: start, lte: end };
     }
 
     const appointments = await prisma.appointment.findMany({
       where,
-      include: { patient: true, doctor: true },
+      include: { patient: true, doctor: true, procedureType: true },
       orderBy: { date: 'asc' }
     });
     res.json(appointments);
@@ -69,8 +87,10 @@ router.post("/", authenticate, async (req: any, res, next) => {
       }
     }
 
+    const appointmentCode = await nextAppointmentCode();
     const appointment = await prisma.appointment.create({ 
       data: { 
+        appointmentCode,
         date: data.date,
         startTime: data.startTime,
         endTime: data.endTime,
@@ -80,6 +100,7 @@ router.post("/", authenticate, async (req: any, res, next) => {
         status: data.status,
         patient: { connect: { id: data.patientId } },
         doctor: { connect: { id: data.doctorId } },
+        procedureType: data.procedureTypeId ? { connect: { id: data.procedureTypeId } } : undefined,
         notifications: { create: { type: "APPOINTMENT_CONFIRMATION", message: "Cita programada correctamente", status: "PENDING" } }
       } 
     });
@@ -116,3 +137,13 @@ router.patch("/:id", authenticate, async (req: any, res, next) => {
 });
 
 export default router;
+
+async function nextAppointmentCode() {
+  const last = await prisma.appointment.findFirst({
+    where: { appointmentCode: { not: null } },
+    orderBy: { appointmentCode: "desc" },
+    select: { appointmentCode: true },
+  });
+  const next = Number(last?.appointmentCode?.replace("CIT-", "") || "0") + 1;
+  return `CIT-${String(next).padStart(6, "0")}`;
+}
