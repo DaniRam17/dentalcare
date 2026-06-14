@@ -550,18 +550,19 @@ router.get("/consents", authenticate, async (_req, res, next) => {
   }
 });
 
-router.post("/consents", authenticate, authorize(["ADMIN", "DOCTOR", "RECEPTIONIST"]), async (req: any, res, next) => {
+router.post("/consents", authenticate, authorize(["ADMIN", "DOCTOR", "RECEPTIONIST"]), upload.single("file"), async (req: any, res, next) => {
   try {
     const body = z.object({
       patientId: uuid,
-      procedureLogId: uuid.optional().nullable(),
+      procedureLogId: z.preprocess((value) => value || undefined, uuid.optional().nullable()),
       description: z.string().min(3),
       documentUrl: z.string().optional().nullable(),
       signerName: z.string().optional().nullable(),
       signatureDataUrl: z.string().optional().nullable(),
       status: z.string().default("SIGNED"),
     }).parse(req.body);
-    const consent = await prisma.consent.create({ data: body as any });
+    const documentUrl = req.file ? `/api/clinical-files/${req.file.filename}/download` : body.documentUrl;
+    const consent = await prisma.consent.create({ data: { ...body, documentUrl } as any });
     await audit(req, "CREATE", "Consent", consent.id, undefined, consent);
     res.status(201).json(consent);
   } catch (error) {

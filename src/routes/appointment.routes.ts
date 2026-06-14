@@ -28,7 +28,7 @@ const appointmentSchema = z.object({
 
 router.get("/", authenticate, async (req, res, next) => {
   try {
-    const { doctorId, patientId, date, status, search } = req.query;
+    const { doctorId, patientId, date, startDate, endDate, status, search } = req.query;
     const where: any = {};
     if (doctorId) where.doctorId = String(doctorId);
     if (patientId) where.patientId = String(patientId);
@@ -49,6 +49,19 @@ router.get("/", authenticate, async (req, res, next) => {
       const end = parseLocalDate(String(date));
       end.setHours(23, 59, 59, 999);
       where.date = { gte: start, lte: end };
+    } else if (startDate || endDate) {
+      const range: any = {};
+      if (startDate) {
+        const start = parseLocalDate(String(startDate));
+        start.setHours(0, 0, 0, 0);
+        range.gte = start;
+      }
+      if (endDate) {
+        const end = parseLocalDate(String(endDate));
+        end.setHours(23, 59, 59, 999);
+        range.lte = end;
+      }
+      where.date = range;
     }
 
     const appointments = await prisma.appointment.findMany({

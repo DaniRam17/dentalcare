@@ -48,14 +48,14 @@ const moduleMeta: Record<ModuleKey, { title: string; description: string; icon: 
 const emptyForms: Record<ModuleKey, any> = {
   "clinical-history": { patientId: "", odontologistId: "", reason: "", diagnosis: "", treatmentPerformed: "", observations: "", procedureTypeIds: [] as string[], date: new Date().toISOString().slice(0, 10) },
   "clinical-files": { patientId: "", file: null },
-  billing: { patientId: "", clinicalProcedureIds: [] as string[], procedureLogIds: [] as string[], inventoryItems: [] as any[], taxRate: 0.15, paymentMethod: "Efectivo", notes: "" },
+  billing: { patientId: "", clinicalProcedureIds: [] as string[], procedureLogIds: [] as string[], inventoryItems: [] as any[], taxRate: 0.15, notes: "" },
   payments: { invoiceId: "", amount: 0, paymentMethod: "Efectivo", reference: "", processor: "" },
   inventory: { name: "", description: "", quantityAvailable: 0, minimumStock: 0, unitOfMeasure: "unidad", unitPrice: 0, taxable: true },
-  consents: { patientId: "", procedureLogId: "", description: "", documentUrl: "", signerName: "", signatureDataUrl: "", status: "SIGNED" },
+  consents: { patientId: "", procedureLogId: "", consentType: "Tratamiento", description: "", signerName: "", relationship: "", observations: "", status: "SIGNED", file: null },
   audit: {},
   reports: {},
   notifications: { type: "REMINDER", message: "", appointmentId: "", status: "PENDING" },
-  specialties: { name: "", description: "", doctorIds: "" },
+  specialties: { name: "", description: "", doctorIds: [] as string[] },
   "fiscal-ranges": { documentType: "FACTURA", cai: "", establishmentCode: "000", emissionPointCode: "001", documentTypeCode: "01", prefix: "", startNumber: 1, endNumber: 1000, currentNumber: 0, nextNumber: 1, authorizationDate: new Date().toISOString().slice(0, 10), emissionDeadline: new Date().toISOString().slice(0, 10), status: "ACTIVE", notes: "" },
 };
 
@@ -142,7 +142,16 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
           nextNumber: Number(form.nextNumber),
         });
       } else if (moduleKey === "specialties") {
-        await apiClient.post(meta.endpoint, { ...form, doctorIds: splitIds(form.doctorIds) });
+        await apiClient.post(meta.endpoint, { ...form, doctorIds: Array.isArray(form.doctorIds) ? form.doctorIds : splitIds(form.doctorIds) });
+      } else if (moduleKey === "consents") {
+        const body = new FormData();
+        body.append("patientId", form.patientId);
+        if (form.procedureLogId) body.append("procedureLogId", form.procedureLogId);
+        body.append("description", `${form.consentType}: ${form.description || ""}${form.relationship ? `\nRelacion: ${form.relationship}` : ""}${form.observations ? `\nObservaciones: ${form.observations}` : ""}`);
+        body.append("signerName", form.signerName || "");
+        body.append("status", form.status || "SIGNED");
+        if (form.file) body.append("file", form.file);
+        await apiClient.post(meta.endpoint, body);
       } else if (moduleKey === "payments") {
         await apiClient.post(meta.endpoint, { ...form, amount: Number(form.amount) });
       } else if (moduleKey === "inventory") {
@@ -283,16 +292,19 @@ function ModuleForm({ moduleKey, form, setForm, lookups }: any) {
   );
   const patientSelect = <SelectField label="Paciente" value={form.patientId} onChange={(value) => setForm({ ...form, patientId: value })} options={lookups.patients.map((p: any) => ({ value: p.id, label: `${p.patientCode || "SIN-COD"} - ${p.firstName} ${p.lastName} - ${p.documentNumber}` }))} />;
   const doctorSelect = <SelectField label="Odontologo" value={form.odontologistId || ""} onChange={(value) => setForm({ ...form, odontologistId: value })} options={lookups.doctors.map((d: any) => ({ value: d.id, label: `Dr. ${d.firstName} ${d.lastName}` }))} required={false} />;
-  const invoiceSelect = <SelectField label="Factura" value={form.invoiceId || ""} onChange={(value) => setForm({ ...form, invoiceId: value })} options={lookups.invoices.map((i: any) => ({ value: i.id, label: `${i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - $${i.total}` }))} />;
+  const invoiceSelect = <SelectField label="Factura pendiente" value={form.invoiceId || ""} onChange={(value) => {
+    const invoice = lookups.invoices.find((item: any) => item.id === value);
+    setForm({ ...form, invoiceId: value, amount: invoice ? Number(invoice.total || 0) : form.amount });
+  }} options={lookups.invoices.filter((i: any) => i.status !== "PAID").map((i: any) => ({ value: i.id, label: `${i.fiscalNumber || i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - $${i.total}` }))} />;
 
   if (moduleKey === "clinical-history") return <>{patientSelect}{doctorSelect}{input("date", "Fecha", "date")}{textarea("reason", "Motivo de consulta")}{textarea("diagnosis", "Diagnostico")}{textarea("treatmentPerformed", "Tratamiento")}{textarea("observations", "Observaciones")}<ProcedurePicker form={form} setForm={setForm} procedures={lookups.procedureTypes || []} /></>;
   if (moduleKey === "clinical-files") return <>{patientSelect}<Field label="Archivo PDF/JPG/PNG"><input required type="file" accept=".pdf,.jpg,.jpeg,.png" className="w-full p-2 border rounded-lg" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] })} /></Field><div className="md:col-span-2 text-sm text-zinc-500 flex gap-2"><Upload className="w-4 h-4" /> El archivo se guarda en almacenamiento local y la metadata en Prisma.</div></>;
   if (moduleKey === "billing") return <BillingForm form={form} setForm={setForm} lookups={lookups} patientSelect={patientSelect} />;
   if (moduleKey === "payments") return <>{invoiceSelect}{input("amount", "Monto", "number")}<SelectField label="Metodo de pago" value={form.paymentMethod} onChange={(value) => setForm({ ...form, paymentMethod: value })} options={["Efectivo", "Transferencia", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"].map((value) => ({ value, label: value }))} />{input("reference", "Referencia o autorizacion")}{input("processor", "Procesador/app")}</>;
   if (moduleKey === "inventory") return <>{input("name", "Insumo")}{input("unitOfMeasure", "Unidad")}{input("quantityAvailable", "Stock inicial", "number")}{input("minimumStock", "Stock minimo", "number")}{input("unitPrice", "Precio de venta", "number")}<Field label="Aplica impuesto"><label className="flex items-center gap-2 p-2 border rounded-lg"><input type="checkbox" checked={Boolean(form.taxable)} onChange={(event) => setForm({ ...form, taxable: event.target.checked })} /> Si</label></Field>{textarea("description", "Descripcion")}</>;
-  if (moduleKey === "consents") return <>{patientSelect}<SelectField label="Procedimiento" value={form.procedureLogId || ""} onChange={(value) => setForm({ ...form, procedureLogId: value })} options={(lookups.procedureLogs || []).filter((log: any) => !form.patientId || log.patientId === form.patientId).map((log: any) => ({ value: log.id, label: `${log.procedureType.name} - ${log.patient.firstName} ${log.patient.lastName}` }))} required={false} />{textarea("description", "Texto del consentimiento")}{input("signerName", "Nombre del firmante")}{textarea("signatureDataUrl", "Firma digital o base64")}{input("documentUrl", "URL del documento firmado")}</>;
+  if (moduleKey === "consents") return <>{patientSelect}<SelectField label="Procedimiento" value={form.procedureLogId || ""} onChange={(value) => setForm({ ...form, procedureLogId: value })} options={(lookups.procedureLogs || []).filter((log: any) => !form.patientId || log.patientId === form.patientId).map((log: any) => ({ value: log.id, label: `${log.procedureType.name} - ${log.patient.firstName} ${log.patient.lastName}` }))} required={false} /><SelectField label="Tipo consentimiento" value={form.consentType} onChange={(value) => setForm({ ...form, consentType: value })} options={["Tratamiento", "Cirugia", "Radiografia", "Anestesia", "Otro"].map((value) => ({ value, label: value }))} />{textarea("description", "Texto del consentimiento")}{input("signerName", "Nombre del firmante")}{input("relationship", "Parentesco o relacion")}{textarea("observations", "Observaciones")}<Field label="Archivo escaneado"><input type="file" accept=".pdf,.jpg,.jpeg,.png" className="w-full p-2 border rounded-lg" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /></Field></>;
   if (moduleKey === "notifications") return <>{input("type", "Tipo")}{textarea("message", "Mensaje")}</>;
-  if (moduleKey === "specialties") return <>{input("name", "Especialidad")}{textarea("description", "Descripcion")}<Field label="Odontologos"><input className="w-full p-2 border rounded-lg" value={form.doctorIds} onChange={(event) => setForm({ ...form, doctorIds: event.target.value })} placeholder="IDs separados por coma" /></Field></>;
+  if (moduleKey === "specialties") return <>{input("name", "Especialidad")}{textarea("description", "Descripcion")}<DoctorPicker form={form} setForm={setForm} doctors={lookups.doctors || []} /></>;
   if (moduleKey === "fiscal-ranges") return <><SelectField label="Tipo documento" value={form.documentType} onChange={(value) => setForm({ ...form, documentType: value })} options={[{ value: "FACTURA", label: "Factura" }, { value: "NOTA_CREDITO", label: "Nota de credito" }, { value: "NOTA_DEBITO", label: "Nota de debito" }]} />{input("cai", "CAI")}{input("establishmentCode", "Establecimiento")}{input("emissionPointCode", "Punto de emision")}{input("documentTypeCode", "Tipo documento fiscal")}{input("startNumber", "Numero inicial", "number")}{input("endNumber", "Numero final", "number")}{input("currentNumber", "Correlativo actual", "number")}{input("nextNumber", "Siguiente correlativo", "number")}{input("authorizationDate", "Fecha autorizacion", "date")}{input("emissionDeadline", "Fecha limite emision", "date")}<SelectField label="Estado" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={["ACTIVE", "INACTIVE", "VENCIDO", "AGOTADO"].map((value) => ({ value, label: value }))} />{textarea("notes", "Notas")}</>;
   return null;
 }
@@ -315,6 +327,26 @@ function ProcedurePicker({ form, setForm, procedures }: any) {
             <span className="font-mono text-xs text-emerald-700">{procedure.procedureCode || "-"}</span>
             <span className="flex-1">{procedure.name}</span>
             <span className="font-semibold">{money(procedure.price)}</span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function DoctorPicker({ form, setForm, doctors }: any) {
+  const selected = form.doctorIds || [];
+  const toggle = (id: string) => {
+    setForm({ ...form, doctorIds: selected.includes(id) ? selected.filter((item: string) => item !== id) : [...selected, id] });
+  };
+  return (
+    <div className="md:col-span-2 space-y-2">
+      <label className="text-sm font-medium text-zinc-700">Odontologos</label>
+      <div className="max-h-40 overflow-auto border rounded-lg divide-y">
+        {doctors.length === 0 ? <p className="p-3 text-sm text-zinc-400">No hay odontologos disponibles</p> : doctors.map((doctor: any) => (
+          <label key={doctor.id} className="flex items-center gap-3 p-3 text-sm">
+            <input type="checkbox" checked={selected.includes(doctor.id)} onChange={() => toggle(doctor.id)} />
+            <span className="flex-1">Dr. {doctor.firstName} {doctor.lastName}</span>
           </label>
         ))}
       </div>
@@ -362,7 +394,6 @@ function BillingForm({ form, setForm, lookups, patientSelect }: any) {
       <Field label="Impuesto general">
         <input className="w-full p-2 border rounded-lg" type="number" step="0.01" min="0" max="1" value={form.taxRate} onChange={(event) => setForm({ ...form, taxRate: Number(event.target.value) })} />
       </Field>
-      <SelectField label="Metodo pago" value={form.paymentMethod} onChange={(value) => setForm({ ...form, paymentMethod: value })} options={["Efectivo", "Transferencia", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"].map((value) => ({ value, label: value }))} />
       <div className="md:col-span-2 space-y-2">
         <label className="text-sm font-medium text-zinc-700">Procedimientos pendientes</label>
         <div className="max-h-36 overflow-auto border rounded-lg divide-y">
