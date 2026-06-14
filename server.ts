@@ -14,6 +14,7 @@ import procedureRoutes from "./src/routes/procedure.routes";
 import prescriptionRoutes from "./src/routes/prescription.routes";
 import shiftRoutes from "./src/routes/shift.routes";
 import reportRoutes from "./src/routes/report.routes";
+import inventoryRoutes from "./src/routes/inventory.routes";
 import designRoutes from "./src/routes/design.routes";
 import integratedRoutes from "./src/routes/integrated.routes";
 
@@ -34,6 +35,7 @@ async function startServer() {
   app.use("/api/prescriptions", prescriptionRoutes);
   app.use("/api/shifts", shiftRoutes);
   app.use("/api/reports", reportRoutes);
+  app.use("/api/inventory", inventoryRoutes);
   app.use("/api", integratedRoutes);
   app.use("/api/design", designRoutes);
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));

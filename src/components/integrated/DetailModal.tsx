@@ -18,10 +18,11 @@ type DetailModalProps = {
   item: any;
   onClose: () => void;
   onDownloadInvoice: (item: any) => void;
+  onDownloadConsent?: (item: any) => void;
   onCancelPayment: (item: any) => void;
 };
 
-export function DetailModal({ moduleKey, item, onClose, onDownloadInvoice, onCancelPayment }: DetailModalProps) {
+export function DetailModal({ moduleKey, item, onClose, onDownloadInvoice, onDownloadConsent, onCancelPayment }: DetailModalProps) {
   const patient = item.patient ? `${item.patient.firstName} ${item.patient.lastName}` : "-";
   const invoicePaid = item.payments?.filter((payment: any) => payment.status !== "CANCELLED").reduce((sum: number, payment: any) => sum + payment.amount, 0) || 0;
   const invoiceBalance = Math.max(Number(item.total || 0) - invoicePaid, 0);
@@ -146,6 +147,7 @@ export function DetailModal({ moduleKey, item, onClose, onDownloadInvoice, onCan
           <div className="flex justify-end gap-3">
             {moduleKey === "billing" && <button onClick={() => onDownloadInvoice(item)} className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold">Descargar PDF</button>}
             {moduleKey === "payments" && item.status !== "CANCELLED" && <button onClick={() => onCancelPayment(item)} className="px-4 py-2 bg-red-600 text-white rounded-lg font-semibold">Cancelar pago</button>}
+            {moduleKey === "consents" && onDownloadConsent && <button onClick={() => onDownloadConsent(item)} className="px-4 py-2 bg-zinc-900 text-white rounded-lg font-semibold">Descargar PDF</button>}
             {moduleKey === "consents" && item.documentUrl && <a href={item.documentUrl} target="_blank" className="px-4 py-2 bg-emerald-600 text-white rounded-lg font-semibold">Abrir documento</a>}
           </div>
         </div>

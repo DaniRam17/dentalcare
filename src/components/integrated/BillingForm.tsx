@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Trash2 } from "lucide-react";
+import { Field } from "./FormControls";
 
 type BillingFormProps = {
   form: any;
@@ -89,8 +90,4 @@ export function BillingForm({ form, setForm, lookups, patientSelect }: BillingFo
       </div>
     </>
   );
-}
-
-function Field({ label, children }: any) {
-  return <div className="space-y-1"><label className="text-sm font-medium text-zinc-700">{label}</label>{children}</div>;
 }

@@ -5,6 +5,7 @@ import path from "path";
 import prisma from "../lib/prisma";
 import { authenticate, authorize } from "../middlewares/auth";
 import { logAudit } from "../services/auditService";
+import { createConsentPdf, createInvoicePdf } from "../services/pdfService";
 import { z } from "zod";
 
 const router = Router();
@@ -441,37 +442,7 @@ router.get("/billing/:id/pdf", authenticate, async (req, res, next) => {
       where: { id: req.params.id },
       include: { patient: true, payments: true, items: true },
     });
-    const paid = invoice.payments.filter((payment) => payment.status !== "CANCELLED").reduce((sum, payment) => sum + payment.amount, 0);
-    const lines = [
-      "DentalCare Pro",
-      "Documento: FACTURA",
-      `Factura fiscal: ${invoice.fiscalNumber || invoice.invoiceNumber}`,
-      `CAI: ${invoice.cai || "-"}`,
-      `Rango autorizado: ${invoice.rangeStart || "-"} al ${invoice.rangeEnd || "-"}`,
-      `Fecha limite de emision: ${invoice.emissionDeadline ? invoice.emissionDeadline.toLocaleDateString() : "-"}`,
-      `Fecha: ${invoice.issueDate.toLocaleDateString()}`,
-      `Paciente: ${invoice.customerName || `${invoice.patient.firstName} ${invoice.patient.lastName}`}`,
-      `Documento/RTN: ${invoice.customerRtn || invoice.customerIdentity || invoice.patient.documentNumber}`,
-      "",
-      "Detalle:",
-      ...invoice.items.flatMap((item) => [
-        `${item.itemCode || "-"} | ${item.quantity} x ${item.description}`,
-        `   Precio: ${formatMoney(item.unitPrice)} | ISV: ${item.taxable ? formatMoney(item.taxAmount || item.tax) : "Exento"} | Total: ${formatMoney(item.total)}`,
-      ]),
-      "",
-      `Importe exento: ${formatMoney(invoice.exemptAmount)}`,
-      `Importe gravado 15%: ${formatMoney(invoice.taxable15)}`,
-      `ISV 15%: ${formatMoney(invoice.isv15 || invoice.tax)}`,
-      `Subtotal: ${formatMoney(invoice.subtotal)}`,
-      `Impuesto: ${formatMoney(invoice.tax)}`,
-      `Total: ${formatMoney(invoice.total)}`,
-      `Total en letras: ${invoice.totalInWords || "-"}`,
-      `Pagado: ${formatMoney(paid)}`,
-      `Saldo: ${formatMoney(Math.max(invoice.total - paid, 0))}`,
-      `Estado: ${invoice.status}`,
-      "Original: Cliente / Copia: Obligado Tributario Emisor",
-    ];
-    const pdf = createSimplePdf(lines);
+    const pdf = createInvoicePdf(invoice);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${invoice.invoiceNumber}.pdf"`);
     res.send(pdf);
@@ -533,79 +504,6 @@ router.patch("/payments/:id/cancel", authenticate, authorize(["ADMIN", "RECEPTIO
   }
 });
 
-router.get("/inventory", authenticate, async (_req, res, next) => {
-  try {
-    const items = await prisma.inventoryItem.findMany({ where: { isActive: true }, include: { movements: { orderBy: { movementDate: "desc" }, take: 8 }, procedures: { include: { procedureType: true } } }, orderBy: { name: "asc" } });
-    res.json(items);
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.post("/inventory", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
-  try {
-    const body = z.object({ name: z.string().min(2), description: z.string().optional().nullable(), quantityAvailable: z.number().int().default(0), minimumStock: z.number().int().default(0), unitOfMeasure: z.string().min(1), unitPrice: z.number().nonnegative().default(0), taxable: z.boolean().default(true) }).parse(req.body);
-    const inventoryCode = await nextInventoryCode();
-    const item = await prisma.inventoryItem.create({ data: { ...body, inventoryCode } });
-    await audit(req, "CREATE", "InventoryItem", item.id, undefined, item);
-    res.status(201).json(item);
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.put("/inventory/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
-  try {
-    const before = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
-    const body = z.object({
-      name: z.string().min(2).optional(),
-      description: z.string().optional().nullable(),
-      quantityAvailable: z.number().int().nonnegative().optional(),
-      minimumStock: z.number().int().nonnegative().optional(),
-      unitOfMeasure: z.string().min(1).optional(),
-      unitPrice: z.number().nonnegative().optional(),
-      taxable: z.boolean().optional(),
-    }).parse(req.body);
-    const item = await prisma.inventoryItem.update({ where: { id: req.params.id }, data: body });
-    await audit(req, "UPDATE", "InventoryItem", item.id, before, item);
-    res.json(item);
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.delete("/inventory/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
-  try {
-    const before = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
-    const item = await prisma.inventoryItem.update({ where: { id: req.params.id }, data: { isActive: false } });
-    await audit(req, "DELETE", "InventoryItem", item.id, before, item);
-    res.json({ message: "Insumo inactivado", item });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.post("/inventory/:id/movements", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: any, res, next) => {
-  try {
-    const body = z.object({ movementType: z.enum(["IN", "OUT", "ADJUST"]), quantity: z.number().int().positive(), reason: z.string().optional().nullable(), reference: z.string().optional().nullable(), observations: z.string().optional().nullable() }).parse(req.body);
-    const result = await prisma.$transaction(async (tx) => {
-      const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
-      const nextQuantity = body.movementType === "IN" ? item.quantityAvailable + body.quantity : body.movementType === "OUT" ? item.quantityAvailable - body.quantity : body.quantity;
-      if (nextQuantity < 0) throw new Error("Stock insuficiente");
-      const movement = await tx.inventoryMovement.create({ data: { inventoryItemId: item.id, ...body, stockBefore: item.quantityAvailable, stockAfter: nextQuantity, userId: req.user?.id } });
-      const updated = await tx.inventoryItem.update({ where: { id: item.id }, data: { quantityAvailable: nextQuantity } });
-      if (updated.quantityAvailable <= updated.minimumStock) {
-        await tx.notification.create({ data: { type: "INVENTORY_ALERT", message: `Stock bajo: ${updated.name}`, status: "PENDING" } });
-      }
-      return { movement, updated };
-    });
-    await audit(req, "CREATE", "InventoryMovement", result.movement.id, undefined, result);
-    res.status(201).json(result);
-  } catch (error) {
-    next(error);
-  }
-});
-
 router.get("/consents", authenticate, async (_req, res, next) => {
   try {
     const consents = await prisma.consent.findMany({ include: { patient: true, procedureLog: { include: { procedureType: true } } }, orderBy: { signedAt: "desc" } });
@@ -630,6 +528,21 @@ router.post("/consents", authenticate, authorize(["ADMIN", "DOCTOR", "RECEPTIONI
     const consent = await prisma.consent.create({ data: { ...body, documentUrl } as any });
     await audit(req, "CREATE", "Consent", consent.id, undefined, consent);
     res.status(201).json(consent);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get("/consents/:id/pdf", authenticate, async (req, res, next) => {
+  try {
+    const consent = await prisma.consent.findUniqueOrThrow({
+      where: { id: req.params.id },
+      include: { patient: true, procedureLog: { include: { procedureType: true } } },
+    });
+    const pdf = createConsentPdf(consent);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="consentimiento-${consent.id}.pdf"`);
+    res.send(pdf);
   } catch (error) {
     next(error);
   }
@@ -820,16 +733,6 @@ async function nextPaymentReference(tx: any) {
   return `PAY-${stamp}-${String(lastNumber + 1).padStart(6, "0")}`;
 }
 
-async function nextInventoryCode() {
-  const last = await prisma.inventoryItem.findFirst({
-    where: { inventoryCode: { not: null } },
-    orderBy: { inventoryCode: "desc" },
-    select: { inventoryCode: true },
-  });
-  const next = Number(last?.inventoryCode?.replace("INV-", "") || "0") + 1;
-  return `INV-${String(next).padStart(6, "0")}`;
-}
-
 function formatFiscalNumber(range: any, number: number) {
   return `${range.establishmentCode}-${range.emissionPointCode}-${range.documentTypeCode}-${String(number).padStart(8, "0")}`;
 }
@@ -843,38 +746,6 @@ function taxRateFor(taxType: string | null | undefined, fallback: number) {
 
 function totalToWords(value: number) {
   return `${Number(value || 0).toFixed(2)} LEMPIRAS`;
-}
-
-function createSimplePdf(lines: string[]) {
-  const escaped = lines.map((line) => line.replace(/[\\()]/g, "\\$&"));
-  const content = [
-    "BT",
-    "/F1 12 Tf",
-    "50 780 Td",
-    "16 TL",
-    ...escaped.flatMap((line, index) => [index === 0 ? "" : "T*", `(${line}) Tj`]).filter(Boolean),
-    "ET",
-  ].join("\n");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach((offset) => {
-    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  });
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
-  return Buffer.from(pdf);
 }
 
 export default router;
