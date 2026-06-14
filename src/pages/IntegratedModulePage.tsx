@@ -35,7 +35,8 @@ type ModuleKey =
   | "reports"
   | "notifications"
   | "specialties"
-  | "fiscal-ranges";
+  | "fiscal-ranges"
+  | "credit-debit-notes";
 
 const moduleMeta: Record<ModuleKey, { title: string; description: string; icon: any; endpoint: string; canCreate?: boolean }> = {
   "clinical-history": { title: "Historial Clinico", description: "Diagnosticos, tratamientos y observaciones cronologicas", icon: History, endpoint: "/clinical-history", canCreate: true },
@@ -49,6 +50,7 @@ const moduleMeta: Record<ModuleKey, { title: string; description: string; icon: 
   notifications: { title: "Notificaciones", description: "Recordatorios de citas, alertas de inventario y eventos importantes", icon: Bell, endpoint: "/notifications", canCreate: true },
   specialties: { title: "Especialidades", description: "Catalogo y asignacion de odontologos", icon: Stethoscope, endpoint: "/specialties", canCreate: true },
   "fiscal-ranges": { title: "Configuracion CAI y Rangos SAR", description: "Rangos fiscales autorizados para facturacion Honduras", icon: ShieldCheck, endpoint: "/fiscal-ranges", canCreate: true },
+  "credit-debit-notes": { title: "Notas Credito / Debito", description: "Documentos fiscales ligados a facturas para reversos y ajustes", icon: FileText, endpoint: "/credit-debit-notes", canCreate: true },
 };
 
 const emptyForms: Record<ModuleKey, any> = {
@@ -63,6 +65,7 @@ const emptyForms: Record<ModuleKey, any> = {
   notifications: { type: "REMINDER", message: "", appointmentId: "", status: "PENDING" },
   specialties: { name: "", description: "", doctorIds: [] as string[] },
   "fiscal-ranges": { documentType: "FACTURA", cai: "", establishmentCode: "000", emissionPointCode: "001", documentTypeCode: "01", prefix: "", startNumber: 1, endNumber: 1000, currentNumber: 0, nextNumber: 1, authorizationDate: new Date().toISOString().slice(0, 10), emissionDeadline: new Date().toISOString().slice(0, 10), status: "ACTIVE", notes: "" },
+  "credit-debit-notes": { invoiceId: "", documentType: "NOTA_CREDITO", reason: "", amount: 0 },
 };
 
 export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ moduleKey }) => {
@@ -124,7 +127,12 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
     event.preventDefault();
     setError("");
     try {
-      if (moduleKey === "clinical-files") {
+      if (editingItem && moduleKey === "clinical-history") {
+        await apiClient.put(`/clinical-history/${editingItem.id}`, {
+          ...form,
+          procedureTypeIds: form.procedureTypeIds || [],
+        });
+      } else if (moduleKey === "clinical-files") {
         if (!form.file || !form.patientId) throw new Error("Selecciona paciente y archivo");
         const body = new FormData();
         body.append("patientId", form.patientId);
@@ -152,7 +160,12 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
           nextNumber: Number(form.nextNumber),
         });
       } else if (moduleKey === "specialties") {
-        await apiClient.post(meta.endpoint, { ...form, doctorIds: Array.isArray(form.doctorIds) ? form.doctorIds : splitIds(form.doctorIds) });
+        const payload = { ...form, doctorIds: Array.isArray(form.doctorIds) ? form.doctorIds : splitIds(form.doctorIds) };
+        if (editingItem) {
+          await apiClient.put(`/specialties/${editingItem.id}`, payload);
+        } else {
+          await apiClient.post(meta.endpoint, payload);
+        }
       } else if (moduleKey === "consents") {
         const body = new FormData();
         body.append("patientId", form.patientId);
@@ -163,7 +176,14 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
         if (form.file) body.append("file", form.file);
         await apiClient.post(meta.endpoint, body);
       } else if (moduleKey === "payments") {
-        await apiClient.post(meta.endpoint, { ...form, amount: Number(form.amount) });
+        const payload = { ...form, amount: Number(form.amount) };
+        if (editingItem) {
+          await apiClient.put(`/payments/${editingItem.id}`, payload);
+        } else {
+          await apiClient.post(meta.endpoint, payload);
+        }
+      } else if (moduleKey === "credit-debit-notes") {
+        await apiClient.post(meta.endpoint, { ...form, amount: Number(form.amount) || undefined });
       } else if (moduleKey === "inventory") {
         const payload = { ...form, quantityAvailable: Number(form.quantityAvailable), minimumStock: Number(form.minimumStock), unitPrice: Number(form.unitPrice), taxable: Boolean(form.taxable) };
         if (editingItem) {
@@ -212,6 +232,47 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
       taxable: Boolean(item.taxable),
     });
     setModalOpen(true);
+  };
+
+  const openEditIntegrated = (item: any) => {
+    setEditingItem(item);
+    if (moduleKey === "clinical-history") {
+      setForm({
+        patientId: item.patientId || item.patient?.id || "",
+        odontologistId: item.odontologistId || item.odontologist?.id || "",
+        reason: item.reason || "",
+        diagnosis: item.diagnosis || "",
+        treatmentPerformed: item.treatmentPerformed || "",
+        observations: item.observations || "",
+        date: item.date ? new Date(item.date).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+        procedureTypeIds: item.procedures?.map((procedure: any) => procedure.procedureTypeId).filter(Boolean) || [],
+      });
+    } else if (moduleKey === "payments") {
+      setForm({
+        invoiceId: item.invoiceId || item.invoice?.id || "",
+        amount: Number(item.amount || 0),
+        paymentMethod: item.paymentMethod || "Efectivo",
+        reference: item.reference || "",
+        processor: item.processor || "",
+      });
+    } else if (moduleKey === "specialties") {
+      setForm({
+        name: item.name || "",
+        description: item.description || "",
+        doctorIds: item.doctors?.map((doctor: any) => doctor.id) || [],
+      });
+    }
+    setModalOpen(true);
+  };
+
+  const removeSpecialty = async (item: any) => {
+    if (!confirm(`Eliminar especialidad ${item.name}?`)) return;
+    try {
+      await apiClient.delete(`/specialties/${item.id}`);
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
   const removeInventory = async (item: any) => {
@@ -336,7 +397,19 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
                       )}
                       {moduleKey === "payments" && item.status !== "CANCELLED" && (
                         <div className="flex justify-end gap-2">
+                          <button title="Editar pago" onClick={() => openEditIntegrated(item)} className="p-2 text-zinc-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Pencil className="w-4 h-4" /></button>
                           <button title="Cancelar pago" onClick={() => cancelPayment(item)} className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Ban className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                      {moduleKey === "clinical-history" && (
+                        <div className="flex justify-end gap-2">
+                          <button title="Editar historial" onClick={() => openEditIntegrated(item)} className="p-2 text-zinc-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Pencil className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                      {moduleKey === "specialties" && (
+                        <div className="flex justify-end gap-2">
+                          <button title="Editar especialidad" onClick={() => openEditIntegrated(item)} className="p-2 text-zinc-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Pencil className="w-4 h-4" /></button>
+                          <button title="Eliminar especialidad" onClick={() => removeSpecialty(item)} className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       )}
                       {moduleKey === "consents" && item.documentUrl && (
@@ -456,6 +529,7 @@ function headersFor(moduleKey: ModuleKey) {
     notifications: ["Fecha", "Tipo", "Mensaje", "Estado"],
     specialties: ["Especialidad", "Descripcion", "Odontologos"],
     "fiscal-ranges": ["Documento", "CAI", "Rango", "Siguiente", "Limite", "Estado"],
+    "credit-debit-notes": ["Fecha", "Tipo", "Numero fiscal", "Factura", "Paciente", "Total", "Estado"],
   };
   return map[moduleKey];
 }
@@ -476,6 +550,7 @@ function cellsFor(moduleKey: ModuleKey, item: any) {
     notifications: [formatDate(item.createdAt), item.type, item.message, item.status],
     specialties: [item.name, item.description || "-", item.doctors?.map((d: any) => `Dr. ${d.lastName}`).join(", ") || "-"],
     "fiscal-ranges": [item.documentType, item.cai, `${item.establishmentCode}-${item.emissionPointCode}-${item.documentTypeCode} ${item.startNumber}-${item.endNumber}`, item.nextNumber, formatDate(item.emissionDeadline), item.status],
+    "credit-debit-notes": [formatDate(item.issueDate), item.documentType, item.fiscalNumber, item.invoice?.fiscalNumber || item.invoice?.invoiceNumber, item.invoice?.patient ? `${item.invoice.patient.firstName} ${item.invoice.patient.lastName}` : "-", money(item.total), item.status],
   };
   return map[moduleKey];
 }

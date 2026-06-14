@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../lib/apiClient';
-import { FileText, Search, Plus, X, Trash2 } from 'lucide-react';
+import { Download, FileText, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 
 export const Prescriptions: React.FC = () => {
   const { user } = useAuth();
@@ -9,6 +9,7 @@ export const Prescriptions: React.FC = () => {
   const [patients, setPatients] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingPrescription, setEditingPrescription] = useState<any>(null);
   const [formData, setFormData] = useState({
     patientId: '',
     items: [{ drugName: '', presentation: 'PILL', dosage: '', frequency: '', duration: '' }]
@@ -57,8 +58,52 @@ export const Prescriptions: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      await apiClient.post('/prescriptions', formData);
+      if (editingPrescription) {
+        await apiClient.put(`/prescriptions/${editingPrescription.id}`, formData);
+      } else {
+        await apiClient.post('/prescriptions', formData);
+      }
       setIsModalOpen(false);
+      setEditingPrescription(null);
+      resetForm();
+      fetchData();
+    } catch (err: any) {
+      alert(err.message);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      patientId: '',
+      items: [{ drugName: '', presentation: 'PILL', dosage: '', frequency: '', duration: '' }]
+    });
+  };
+
+  const openCreate = () => {
+    setEditingPrescription(null);
+    resetForm();
+    setIsModalOpen(true);
+  };
+
+  const openEdit = (prescription: any) => {
+    setEditingPrescription(prescription);
+    setFormData({
+      patientId: prescription.patientId,
+      items: prescription.items.map((item: any) => ({
+        drugName: item.drugName || '',
+        presentation: item.presentation || 'PILL',
+        dosage: item.dosage || '',
+        frequency: item.frequency || '',
+        duration: item.duration || '',
+      }))
+    });
+    setIsModalOpen(true);
+  };
+
+  const removePrescription = async (prescription: any) => {
+    if (!confirm(`Cancelar receta #${String(prescription.correlative).padStart(4, '0')}?`)) return;
+    try {
+      await apiClient.delete(`/prescriptions/${prescription.id}`);
       fetchData();
     } catch (err: any) {
       alert(err.message);
@@ -83,7 +128,7 @@ export const Prescriptions: React.FC = () => {
           <p className="text-zinc-500">Historial y emisión de prescripciones electrónicas</p>
         </div>
         {(user?.role === 'ADMIN' || user?.role === 'DOCTOR') && (
-          <button onClick={() => setIsModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm">
+          <button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all shadow-sm">
             <Plus className="w-4 h-4" /> Nueva Receta
           </button>
         )}
@@ -93,8 +138,8 @@ export const Prescriptions: React.FC = () => {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-3xl shadow-xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="p-6 border-b flex justify-between items-center bg-zinc-50">
-              <h2 className="text-xl font-bold">Emitir Nueva Receta</h2>
-              <button onClick={() => setIsModalOpen(false)}><X className="w-6 h-6" /></button>
+              <h2 className="text-xl font-bold">{editingPrescription ? 'Editar Receta' : 'Emitir Nueva Receta'}</h2>
+              <button onClick={() => { setIsModalOpen(false); setEditingPrescription(null); resetForm(); }}><X className="w-6 h-6" /></button>
             </div>
             <form onSubmit={handleSubmit} className="p-6 flex-1 overflow-auto space-y-6">
               <div className="space-y-1">
@@ -130,7 +175,7 @@ export const Prescriptions: React.FC = () => {
                   </div>
                 ))}
               </div>
-              <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">Emitir Receta</button>
+              <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl">{editingPrescription ? 'Guardar Cambios' : 'Emitir Receta'}</button>
             </form>
           </div>
         </div>
@@ -155,7 +200,11 @@ export const Prescriptions: React.FC = () => {
                 <td className="px-6 py-4 text-sm text-zinc-500">{new Date(p.date).toLocaleDateString()}</td>
                 <td className="px-6 py-4 text-sm text-zinc-600">{p.items.length} items</td>
                 <td className="px-6 py-4 text-right">
-                  <button onClick={() => downloadPdf(p)} className="text-emerald-600 hover:underline text-sm font-bold">Descargar PDF</button>
+                  <div className="flex justify-end gap-2">
+                    <button title="Descargar PDF" onClick={() => downloadPdf(p)} className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-lg"><Download className="w-4 h-4" /></button>
+                    <button title="Editar receta" onClick={() => openEdit(p)} className="p-2 text-zinc-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Pencil className="w-4 h-4" /></button>
+                    <button title="Cancelar receta" onClick={() => removePrescription(p)} className="p-2 text-zinc-500 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                  </div>
                 </td>
               </tr>
             ))}

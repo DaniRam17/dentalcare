@@ -366,6 +366,33 @@ model Invoice {
   procedureLogs ProcedureLog[]
   clinicalProcedures ClinicalHistoryProcedure[]
   payments      Payment[]
+  creditDebitNotes CreditDebitNote[]
+}
+
+model CreditDebitNote {
+  id            String   @id @default(uuid())
+  noteCode      String?  @unique
+  documentType  String
+  fiscalNumber  String   @unique
+  cai           String?
+  rangeStart    Int?
+  rangeEnd      Int?
+  emissionDeadline DateTime?
+  reason        String
+  subtotal      Float
+  tax           Float    @default(0)
+  total         Float
+  status        String   @default("ISSUED")
+  issueDate     DateTime @default(now())
+  createdById   String?
+
+  invoiceId     String
+  invoice       Invoice @relation(fields: [invoiceId], references: [id])
+  fiscalRangeId String?
+  fiscalRange   FiscalDocumentRange? @relation(fields: [fiscalRangeId], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 model InvoiceItem {
@@ -414,6 +441,7 @@ model FiscalDocumentRange {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   invoices          Invoice[]
+  creditDebitNotes  CreditDebitNote[]
 
   @@index([documentType, status])
 }

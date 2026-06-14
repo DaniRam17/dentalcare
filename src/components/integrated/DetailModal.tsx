@@ -11,7 +11,8 @@ type ModuleKey =
   | "reports"
   | "notifications"
   | "specialties"
-  | "fiscal-ranges";
+  | "fiscal-ranges"
+  | "credit-debit-notes";
 
 type DetailModalProps = {
   moduleKey: ModuleKey;
@@ -40,6 +41,7 @@ export function DetailModal({ moduleKey, item, onClose, onDownloadInvoice, onDow
     notifications: "Detalle de notificacion",
     specialties: "Detalle de especialidad",
     "fiscal-ranges": "Detalle de rango fiscal",
+    "credit-debit-notes": "Detalle de nota fiscal",
   };
 
   const rows: Array<[string, any]> = moduleKey === "billing" ? [

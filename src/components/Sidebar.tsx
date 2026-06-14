@@ -36,6 +36,7 @@ export const Sidebar: React.FC = () => {
     { icon: History, label: "Historial Clinico", path: "/clinical-history", roles: ["ADMIN", "DOCTOR", "RECEPTIONIST"] },
     { icon: Archive, label: "Archivos Clinicos", path: "/clinical-files", roles: ["ADMIN", "DOCTOR", "RECEPTIONIST"] },
     { icon: FileText, label: "Facturacion", path: "/billing", roles: ["ADMIN", "RECEPTIONIST"] },
+    { icon: FileText, label: "Notas Credito/Debito", path: "/credit-debit-notes", roles: ["ADMIN", "RECEPTIONIST"] },
     { icon: ShieldCheck, label: "CAI / Rangos SAR", path: "/billing/settings", roles: ["ADMIN"] },
     { icon: CreditCard, label: "Pagos", path: "/payments", roles: ["ADMIN", "RECEPTIONIST"] },
     { icon: Package, label: "Inventario", path: "/inventory", roles: ["ADMIN", "DOCTOR", "NURSE"] },

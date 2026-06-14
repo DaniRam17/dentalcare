@@ -55,7 +55,7 @@ router.get("/lookups", authenticate, async (_req, res, next) => {
         include: { patient: { select: { firstName: true, lastName: true, patientCode: true, documentNumber: true } }, procedureType: true },
       }),
       prisma.inventoryItem.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, inventoryCode: true, name: true, quantityAvailable: true, minimumStock: true, unitOfMeasure: true, unitPrice: true, taxable: true } }),
-      prisma.invoice.findMany({ where: { status: { in: ["PENDING", "PARTIAL"] } }, orderBy: { issueDate: "desc" }, select: { id: true, invoiceNumber: true, fiscalNumber: true, total: true, status: true, payments: true, patient: { select: { firstName: true, lastName: true } } } }),
+      prisma.invoice.findMany({ where: { status: { in: ["PENDING", "PARTIAL", "PAID"] } }, orderBy: { issueDate: "desc" }, select: { id: true, invoiceNumber: true, fiscalNumber: true, total: true, status: true, payments: true, patient: { select: { firstName: true, lastName: true } } } }),
       prisma.fiscalDocumentRange.findMany({ where: { status: "ACTIVE" }, orderBy: { emissionDeadline: "asc" } }),
     ]);
     res.json({ patients, doctors, procedureTypes, procedureLogs, clinicalProcedures, inventoryItems, invoices, fiscalRanges });
@@ -157,16 +157,45 @@ router.post("/clinical-history", authenticate, authorize(["ADMIN", "DOCTOR"]), a
 
 router.put("/clinical-history/:id", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: any, res, next) => {
   try {
-    const before = await prisma.clinicalHistory.findUniqueOrThrow({ where: { id: req.params.id } });
+    const before = await prisma.clinicalHistory.findUniqueOrThrow({ where: { id: req.params.id }, include: { procedures: true } });
     const body = z.object({
       date: optionalDate,
+      reason: z.string().optional().nullable(),
       diagnosis: z.string().min(3).optional(),
       treatmentPerformed: z.string().optional().nullable(),
       observations: z.string().optional().nullable(),
       patientId: uuid.optional(),
       odontologistId: uuid.optional().nullable(),
+      procedureTypeIds: z.array(uuid).optional(),
     }).parse(req.body);
-    const record = await prisma.clinicalHistory.update({ where: { id: req.params.id }, data: body as any });
+    const existingProcedureTypeIds = new Set(before.procedures.map((procedure) => procedure.procedureTypeId).filter(Boolean));
+    const newProcedureTypeIds = (body.procedureTypeIds || []).filter((id) => !existingProcedureTypeIds.has(id));
+    const procedures = await prisma.procedureType.findMany({ where: { id: { in: newProcedureTypeIds }, isActive: true } });
+    const record = await prisma.clinicalHistory.update({
+      where: { id: req.params.id },
+      data: {
+        date: body.date,
+        reason: body.reason,
+        diagnosis: body.diagnosis,
+        treatmentPerformed: body.treatmentPerformed,
+        observations: body.observations,
+        patientId: body.patientId,
+        odontologistId: body.odontologistId,
+        procedures: {
+          create: procedures.map((procedure) => ({
+            patientId: body.patientId || before.patientId,
+            procedureTypeId: procedure.id,
+            procedureCode: procedure.procedureCode || procedure.id,
+            procedureName: procedure.name,
+            price: procedure.price,
+            taxType: procedure.taxType,
+            billingStatus: "PENDING",
+            performedById: body.odontologistId || before.odontologistId || req.user?.id,
+          })),
+        },
+      } as any,
+      include: { patient: true, odontologist: true, procedures: true },
+    });
     await audit(req, "UPDATE", "ClinicalHistory", record.id, before, record);
     res.json(record);
   } catch (error) {
@@ -451,6 +480,85 @@ router.get("/billing/:id/pdf", authenticate, async (req, res, next) => {
   }
 });
 
+router.get("/credit-debit-notes", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), async (_req, res, next) => {
+  try {
+    const notes = await prisma.creditDebitNote.findMany({
+      include: { invoice: { include: { patient: true } }, fiscalRange: true },
+      orderBy: { issueDate: "desc" },
+    });
+    res.json(notes);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/credit-debit-notes", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), async (req: any, res, next) => {
+  try {
+    const body = z.object({
+      invoiceId: uuid,
+      documentType: z.enum(["NOTA_CREDITO", "NOTA_DEBITO"]),
+      reason: z.string().min(5),
+      amount: z.number().positive().optional(),
+    }).parse(req.body);
+    const note = await prisma.$transaction(async (tx) => {
+      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: body.invoiceId }, include: { creditDebitNotes: true } });
+      if (invoice.status === "CANCELLED") throw new Error("No se puede emitir nota sobre una factura cancelada");
+      const fiscalRange = await tx.fiscalDocumentRange.findFirst({
+        where: { documentType: body.documentType, status: "ACTIVE", emissionDeadline: { gte: new Date() } },
+        orderBy: { emissionDeadline: "asc" },
+      });
+      if (!fiscalRange) throw new Error(`No existe rango SAR activo para ${body.documentType}`);
+      if (fiscalRange.nextNumber > fiscalRange.endNumber) throw new Error("El rango SAR activo esta agotado");
+      const noteCode = await nextCreditDebitNoteCode(tx, body.documentType);
+      const fiscalNumber = formatFiscalNumber(fiscalRange, fiscalRange.nextNumber);
+      const baseTotal = body.amount || invoice.total;
+      if (body.documentType === "NOTA_CREDITO") {
+        const credited = invoice.creditDebitNotes
+          .filter((item) => item.documentType === "NOTA_CREDITO" && item.status === "ISSUED")
+          .reduce((sum, item) => sum + item.total, 0);
+        if (credited + baseTotal > invoice.total) throw new Error("La nota de credito excede el total de la factura");
+      }
+      const subtotal = Number((baseTotal / 1.15).toFixed(2));
+      const tax = Number((baseTotal - subtotal).toFixed(2));
+      const created = await tx.creditDebitNote.create({
+        data: {
+          noteCode,
+          documentType: body.documentType,
+          fiscalNumber,
+          cai: fiscalRange.cai,
+          rangeStart: fiscalRange.startNumber,
+          rangeEnd: fiscalRange.endNumber,
+          emissionDeadline: fiscalRange.emissionDeadline,
+          reason: body.reason,
+          subtotal,
+          tax,
+          total: Number(baseTotal.toFixed(2)),
+          invoiceId: invoice.id,
+          fiscalRangeId: fiscalRange.id,
+          createdById: req.user?.id,
+        },
+        include: { invoice: { include: { patient: true } }, fiscalRange: true },
+      });
+      await tx.fiscalDocumentRange.update({
+        where: { id: fiscalRange.id },
+        data: {
+          currentNumber: fiscalRange.nextNumber,
+          nextNumber: fiscalRange.nextNumber + 1,
+          status: fiscalRange.nextNumber + 1 > fiscalRange.endNumber ? "AGOTADO" : fiscalRange.status,
+        },
+      });
+      if (body.documentType === "NOTA_CREDITO" && baseTotal >= invoice.total) {
+        await tx.invoice.update({ where: { id: invoice.id }, data: { status: "CREDITED" } });
+      }
+      return created;
+    });
+    await audit(req, "CREATE", "CreditDebitNote", note.id, undefined, note);
+    res.status(201).json(note);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/payments", authenticate, async (_req, res, next) => {
   try {
     const payments = await prisma.payment.findMany({ include: { invoice: { include: { patient: true, payments: true } } }, orderBy: { paymentDate: "desc" } });
@@ -482,6 +590,43 @@ router.post("/payments", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), asy
     });
     await audit(req, "CREATE", "Payment", payment.id, undefined, payment);
     res.status(201).json(payment);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/payments/:id", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), async (req: any, res, next) => {
+  try {
+    const body = z.object({
+      invoiceId: uuid,
+      amount: z.number().positive(),
+      paymentMethod: z.enum(["Efectivo", "Tarjeta", "Transferencia", "POS", "Billetera digital", "Otro", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"]),
+      reference: z.string().optional().nullable(),
+      processor: z.string().optional().nullable(),
+    }).parse(req.body);
+    const result = await prisma.$transaction(async (tx) => {
+      const before = await tx.payment.findUniqueOrThrow({ where: { id: req.params.id } });
+      if (before.status === "CANCELLED") throw new Error("No se puede editar un pago cancelado");
+      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: body.invoiceId }, include: { payments: true } });
+      const paidWithoutCurrent = invoice.payments
+        .filter((item) => item.id !== before.id && item.status !== "CANCELLED")
+        .reduce((sum, item) => sum + item.amount, 0);
+      const balance = Number((invoice.total - paidWithoutCurrent).toFixed(2));
+      if (body.amount > balance) throw new Error(`El pago excede el saldo disponible (${formatMoney(balance)})`);
+      const payment = await tx.payment.update({ where: { id: req.params.id }, data: body });
+      const paid = paidWithoutCurrent + payment.amount;
+      await tx.invoice.update({ where: { id: invoice.id }, data: { status: paid >= invoice.total ? "PAID" : paid > 0 ? "PARTIAL" : "PENDING" } });
+      if (before.invoiceId !== body.invoiceId) {
+        const oldInvoice = await tx.invoice.findUniqueOrThrow({ where: { id: before.invoiceId }, include: { payments: true } });
+        const oldPaid = oldInvoice.payments
+          .filter((item) => item.id !== before.id && item.status !== "CANCELLED")
+          .reduce((sum, item) => sum + item.amount, 0);
+        await tx.invoice.update({ where: { id: oldInvoice.id }, data: { status: oldPaid >= oldInvoice.total ? "PAID" : oldPaid > 0 ? "PARTIAL" : "PENDING" } });
+      }
+      return { before, payment };
+    });
+    await audit(req, "UPDATE", "Payment", result.payment.id, result.before, result.payment);
+    res.json(result.payment);
   } catch (error) {
     next(error);
   }
@@ -672,12 +817,44 @@ router.post("/specialties", authenticate, authorize(["ADMIN"]), async (req: any,
   }
 });
 
+router.put("/specialties/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
+  try {
+    const before = await prisma.specialty.findUniqueOrThrow({ where: { id: req.params.id }, include: { doctors: true } });
+    const body = z.object({ name: z.string().min(2), description: z.string().optional().nullable(), doctorIds: z.array(uuid).default([]) }).parse(req.body);
+    const specialty = await prisma.specialty.update({
+      where: { id: req.params.id },
+      data: {
+        name: body.name,
+        description: body.description,
+        doctors: { set: body.doctorIds.map((id) => ({ id })) },
+      },
+      include: { doctors: true },
+    });
+    await audit(req, "UPDATE", "Specialty", specialty.id, before, specialty);
+    res.json(specialty);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.put("/specialties/:id/doctors", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
   try {
     const body = z.object({ doctorIds: z.array(uuid) }).parse(req.body);
     const specialty = await prisma.specialty.update({ where: { id: req.params.id }, data: { doctors: { set: body.doctorIds.map((id) => ({ id })) } }, include: { doctors: true } });
     await audit(req, "UPDATE", "Specialty", specialty.id, undefined, specialty);
     res.json(specialty);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/specialties/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
+  try {
+    const before = await prisma.specialty.findUniqueOrThrow({ where: { id: req.params.id }, include: { doctors: true } });
+    await prisma.specialty.update({ where: { id: req.params.id }, data: { doctors: { set: [] } } });
+    await prisma.specialty.delete({ where: { id: req.params.id } });
+    await audit(req, "DELETE", "Specialty", req.params.id, before);
+    res.json({ message: "Especialidad eliminada" });
   } catch (error) {
     next(error);
   }
@@ -731,6 +908,17 @@ async function nextPaymentReference(tx: any) {
   const stamp = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
   const lastNumber = last?.reference?.includes(stamp) ? Number(last.reference.split("-").pop() || "0") : 0;
   return `PAY-${stamp}-${String(lastNumber + 1).padStart(6, "0")}`;
+}
+
+async function nextCreditDebitNoteCode(tx: any, documentType: string) {
+  const prefix = documentType === "NOTA_CREDITO" ? "NC" : "ND";
+  const last = await tx.creditDebitNote.findFirst({
+    where: { noteCode: { startsWith: `${prefix}-` } },
+    orderBy: { noteCode: "desc" },
+    select: { noteCode: true },
+  });
+  const next = Number(last?.noteCode?.replace(`${prefix}-`, "") || "0") + 1;
+  return `${prefix}-${String(next).padStart(6, "0")}`;
 }
 
 function formatFiscalNumber(range: any, number: number) {

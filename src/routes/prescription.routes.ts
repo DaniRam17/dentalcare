@@ -62,6 +62,31 @@ router.post("/", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: any, 
   }
 });
 
+router.put("/:id", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: any, res, next) => {
+  try {
+    const { patientId, items } = prescriptionSchema.parse(req.body);
+    const before = await prisma.prescription.findUniqueOrThrow({ where: { id: req.params.id }, include: { items: true } });
+    if (!before.isActive) return res.status(400).json({ error: "No se puede editar una receta cancelada" });
+
+    const prescription = await prisma.$transaction(async (tx) => {
+      await tx.prescriptionItem.deleteMany({ where: { prescriptionId: req.params.id } });
+      return tx.prescription.update({
+        where: { id: req.params.id },
+        data: {
+          patientId,
+          items: { create: items },
+        },
+        include: { patient: true, doctor: true, items: true },
+      });
+    });
+
+    await logAudit("UPDATE", "Prescription", prescription.id, req.user.id, undefined, before, prescription);
+    res.json(prescription);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/:id/pdf", authenticate, async (req, res, next) => {
   try {
     const prescription = await prisma.prescription.findUniqueOrThrow({

@@ -13,7 +13,8 @@ type ModuleKey =
   | "reports"
   | "notifications"
   | "specialties"
-  | "fiscal-ranges";
+  | "fiscal-ranges"
+  | "credit-debit-notes";
 
 type ModuleFormProps = {
   moduleKey: ModuleKey;
@@ -43,6 +44,10 @@ export function ModuleForm({ moduleKey, form, setForm, lookups }: ModuleFormProp
     const balance = Math.max(Number(i.total || 0) - paid, 0);
     return { value: i.id, label: `${i.fiscalNumber || i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - Saldo $${balance.toFixed(2)}` };
   })} />;
+  const anyInvoiceSelect = <SelectField label="Factura" value={form.invoiceId || ""} onChange={(value) => {
+    const invoice = lookups.invoices.find((item: any) => item.id === value);
+    setForm({ ...form, invoiceId: value, amount: invoice ? Number(invoice.total || 0) : form.amount });
+  }} options={lookups.invoices.map((i: any) => ({ value: i.id, label: `${i.fiscalNumber || i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - $${Number(i.total || 0).toFixed(2)}` }))} />;
 
   if (moduleKey === "clinical-history") return <>{patientSelect}{doctorSelect}{input("date", "Fecha", "date")}{textarea("reason", "Motivo de consulta")}{textarea("diagnosis", "Diagnostico")}{textarea("treatmentPerformed", "Tratamiento")}{textarea("observations", "Observaciones")}<ProcedurePicker form={form} setForm={setForm} procedures={lookups.procedureTypes || []} /></>;
   if (moduleKey === "clinical-files") return <>{patientSelect}<Field label="Archivo PDF/JPG/PNG"><input required type="file" accept=".pdf,.jpg,.jpeg,.png" className="w-full p-2 border rounded-lg" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] })} /></Field><div className="md:col-span-2 text-sm text-zinc-500 flex gap-2"><Upload className="w-4 h-4" /> El archivo se guarda en almacenamiento local y la metadata en Prisma.</div></>;
@@ -53,6 +58,7 @@ export function ModuleForm({ moduleKey, form, setForm, lookups }: ModuleFormProp
   if (moduleKey === "notifications") return <>{input("type", "Tipo")}{textarea("message", "Mensaje")}</>;
   if (moduleKey === "specialties") return <>{input("name", "Especialidad")}{textarea("description", "Descripcion")}<DoctorPicker form={form} setForm={setForm} doctors={lookups.doctors || []} /></>;
   if (moduleKey === "fiscal-ranges") return <><SelectField label="Tipo documento" value={form.documentType} onChange={(value) => setForm({ ...form, documentType: value })} options={[{ value: "FACTURA", label: "Factura" }, { value: "NOTA_CREDITO", label: "Nota de credito" }, { value: "NOTA_DEBITO", label: "Nota de debito" }]} />{input("cai", "CAI")}{input("establishmentCode", "Establecimiento")}{input("emissionPointCode", "Punto de emision")}{input("documentTypeCode", "Tipo documento fiscal")}{input("startNumber", "Numero inicial", "number")}{input("endNumber", "Numero final", "number")}{input("currentNumber", "Correlativo actual", "number")}{input("nextNumber", "Siguiente correlativo", "number")}{input("authorizationDate", "Fecha autorizacion", "date")}{input("emissionDeadline", "Fecha limite emision", "date")}<SelectField label="Estado" value={form.status} onChange={(value) => setForm({ ...form, status: value })} options={["ACTIVE", "INACTIVE", "VENCIDO", "AGOTADO"].map((value) => ({ value, label: value }))} />{textarea("notes", "Notas")}</>;
+  if (moduleKey === "credit-debit-notes") return <>{anyInvoiceSelect}<SelectField label="Tipo de nota" value={form.documentType} onChange={(value) => setForm({ ...form, documentType: value })} options={[{ value: "NOTA_CREDITO", label: "Nota de credito" }, { value: "NOTA_DEBITO", label: "Nota de debito" }]} />{input("amount", "Monto de ajuste", "number")}{textarea("reason", "Motivo fiscal")}</>;
   return null;
 }
 
