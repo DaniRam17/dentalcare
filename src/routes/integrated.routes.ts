@@ -411,8 +411,20 @@ router.post("/billing", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), asyn
         data: { billingStatus: "BILLED", invoiceId: created.id },
       });
       for (const item of inventoryLines) {
-        await tx.inventoryItem.update({ where: { id: item.item.id }, data: { quantityAvailable: item.item.quantityAvailable - item.line.quantity } });
-        await tx.inventoryMovement.create({ data: { inventoryItemId: item.item.id, movementType: "OUT", quantity: item.line.quantity, reason: `Factura ${created.invoiceNumber}` } });
+        const stockAfter = item.item.quantityAvailable - item.line.quantity;
+        await tx.inventoryItem.update({ where: { id: item.item.id }, data: { quantityAvailable: stockAfter } });
+        await tx.inventoryMovement.create({
+          data: {
+            inventoryItemId: item.item.id,
+            movementType: "OUT",
+            quantity: item.line.quantity,
+            stockBefore: item.item.quantityAvailable,
+            stockAfter,
+            reason: `Factura ${created.invoiceNumber}`,
+            reference: created.fiscalNumber || created.invoiceNumber,
+            userId: req.user?.id,
+          },
+        });
       }
       return created;
     });
@@ -429,7 +441,7 @@ router.get("/billing/:id/pdf", authenticate, async (req, res, next) => {
       where: { id: req.params.id },
       include: { patient: true, payments: true, items: true },
     });
-    const paid = invoice.payments.reduce((sum, payment) => sum + payment.amount, 0);
+    const paid = invoice.payments.filter((payment) => payment.status !== "CANCELLED").reduce((sum, payment) => sum + payment.amount, 0);
     const lines = [
       "DentalCare Pro",
       "Documento: FACTURA",
@@ -470,7 +482,7 @@ router.get("/billing/:id/pdf", authenticate, async (req, res, next) => {
 
 router.get("/payments", authenticate, async (_req, res, next) => {
   try {
-    const payments = await prisma.payment.findMany({ include: { invoice: { include: { patient: true } } }, orderBy: { paymentDate: "desc" } });
+    const payments = await prisma.payment.findMany({ include: { invoice: { include: { patient: true, payments: true } } }, orderBy: { paymentDate: "desc" } });
     res.json(payments);
   } catch (error) {
     next(error);
@@ -537,6 +549,37 @@ router.post("/inventory", authenticate, authorize(["ADMIN"]), async (req: any, r
     const item = await prisma.inventoryItem.create({ data: { ...body, inventoryCode } });
     await audit(req, "CREATE", "InventoryItem", item.id, undefined, item);
     res.status(201).json(item);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.put("/inventory/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
+  try {
+    const before = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
+    const body = z.object({
+      name: z.string().min(2).optional(),
+      description: z.string().optional().nullable(),
+      quantityAvailable: z.number().int().nonnegative().optional(),
+      minimumStock: z.number().int().nonnegative().optional(),
+      unitOfMeasure: z.string().min(1).optional(),
+      unitPrice: z.number().nonnegative().optional(),
+      taxable: z.boolean().optional(),
+    }).parse(req.body);
+    const item = await prisma.inventoryItem.update({ where: { id: req.params.id }, data: body });
+    await audit(req, "UPDATE", "InventoryItem", item.id, before, item);
+    res.json(item);
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/inventory/:id", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
+  try {
+    const before = await prisma.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
+    const item = await prisma.inventoryItem.update({ where: { id: req.params.id }, data: { isActive: false } });
+    await audit(req, "DELETE", "InventoryItem", item.id, before, item);
+    res.json({ message: "Insumo inactivado", item });
   } catch (error) {
     next(error);
   }

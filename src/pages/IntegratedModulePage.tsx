@@ -1,14 +1,20 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { apiClient } from "../lib/apiClient";
+import { BillingForm } from "../components/integrated/BillingForm";
+import { DetailModal } from "../components/integrated/DetailModal";
 import {
   Archive,
+  Ban,
   Bell,
   ClipboardList,
   CreditCard,
+  Download,
+  Eye,
   FileCheck,
   FileText,
   History,
   Package,
+  Pencil,
   Plus,
   Search,
   ShieldCheck,
@@ -69,6 +75,8 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [movementModal, setMovementModal] = useState<any>(null);
+  const [detailItem, setDetailItem] = useState<any>(null);
+  const [editingItem, setEditingItem] = useState<any>(null);
   const [form, setForm] = useState<any>(emptyForms[moduleKey]);
   const [movementForm, setMovementForm] = useState({ movementType: "IN", quantity: 1, reason: "", reference: "", observations: "" });
   const [error, setError] = useState("");
@@ -157,11 +165,17 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
       } else if (moduleKey === "payments") {
         await apiClient.post(meta.endpoint, { ...form, amount: Number(form.amount) });
       } else if (moduleKey === "inventory") {
-        await apiClient.post(meta.endpoint, { ...form, quantityAvailable: Number(form.quantityAvailable), minimumStock: Number(form.minimumStock), unitPrice: Number(form.unitPrice), taxable: Boolean(form.taxable) });
+        const payload = { ...form, quantityAvailable: Number(form.quantityAvailable), minimumStock: Number(form.minimumStock), unitPrice: Number(form.unitPrice), taxable: Boolean(form.taxable) };
+        if (editingItem) {
+          await apiClient.put(`/inventory/${editingItem.id}`, payload);
+        } else {
+          await apiClient.post(meta.endpoint, payload);
+        }
       } else {
         await apiClient.post(meta.endpoint, normalizePayload(form));
       }
       setModalOpen(false);
+      setEditingItem(null);
       setForm(emptyForms[moduleKey]);
       loadData();
     } catch (err: any) {
@@ -180,6 +194,36 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
     setMovementForm({ movementType, quantity: 1, reason: "", reference: "", observations: "" });
   };
 
+  const openCreate = () => {
+    setEditingItem(null);
+    setForm(emptyForms[moduleKey]);
+    setModalOpen(true);
+  };
+
+  const openEditInventory = (item: any) => {
+    setEditingItem(item);
+    setForm({
+      name: item.name || "",
+      description: item.description || "",
+      quantityAvailable: item.quantityAvailable || 0,
+      minimumStock: item.minimumStock || 0,
+      unitOfMeasure: item.unitOfMeasure || "unidad",
+      unitPrice: item.unitPrice || 0,
+      taxable: Boolean(item.taxable),
+    });
+    setModalOpen(true);
+  };
+
+  const removeInventory = async (item: any) => {
+    if (!confirm(`Inactivar insumo ${item.inventoryCode || item.name}?`)) return;
+    try {
+      await apiClient.delete(`/inventory/${item.id}`);
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   const submitMovement = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!movementModal) return;
@@ -195,6 +239,17 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
   const downloadInvoice = async (item: any) => {
     try {
       await apiClient.download(`/billing/${item.id}/pdf`, `${item.fiscalNumber || item.invoiceNumber}.pdf`);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const cancelPayment = async (item: any) => {
+    const reason = prompt("Motivo de cancelacion del pago");
+    if (!reason || reason.trim().length < 3) return;
+    try {
+      await apiClient.patch(`/payments/${item.id}/cancel`, { reason: reason.trim() });
+      loadData();
     } catch (err: any) {
       setError(err.message);
     }
@@ -220,7 +275,7 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
           <p className="text-zinc-500">{meta.description}</p>
         </div>
         {meta.canCreate && (
-          <button onClick={() => setModalOpen(true)} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-all shadow-sm">
+          <button onClick={openCreate} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-all shadow-sm">
             <Plus className="w-4 h-4" /> Nuevo
           </button>
         )}
@@ -255,22 +310,39 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
                   <tr key={item.id} className="hover:bg-zinc-50">
                     {cellsFor(moduleKey, item).map((cell, index) => <td key={index} className="px-6 py-4 text-sm text-zinc-700">{cell}</td>)}
                     <td className="px-6 py-4 text-right">
+                      <div className="flex justify-end gap-2">
+                        {moduleKey !== "audit" && moduleKey !== "reports" && (
+                          <button title="Ver detalle" onClick={() => setDetailItem(item)} className="p-2 text-zinc-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Eye className="w-4 h-4" /></button>
+                        )}
+                      </div>
                       {moduleKey === "clinical-files" && (
                         <div className="flex justify-end gap-2">
-                          <a className="px-3 py-1 text-xs rounded-lg bg-zinc-100 text-zinc-700 hover:bg-zinc-200" href={item.fileUrl} target="_blank">Descargar</a>
+                          <a title="Descargar" className="p-2 text-zinc-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg" href={item.fileUrl} target="_blank"><Download className="w-4 h-4" /></a>
                           <button onClick={() => removeFile(item.id)} className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       )}
                       {moduleKey === "billing" && (
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => downloadInvoice(item)} className="px-3 py-1 text-xs rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100">Factura PDF</button>
+                          <button title="Descargar factura PDF" onClick={() => downloadInvoice(item)} className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-lg"><Download className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                      {moduleKey === "payments" && item.status !== "CANCELLED" && (
+                        <div className="flex justify-end gap-2">
+                          <button title="Cancelar pago" onClick={() => cancelPayment(item)} className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Ban className="w-4 h-4" /></button>
+                        </div>
+                      )}
+                      {moduleKey === "consents" && item.documentUrl && (
+                        <div className="flex justify-end gap-2">
+                          <a title="Abrir documento" className="p-2 text-emerald-700 hover:bg-emerald-50 rounded-lg" href={item.documentUrl} target="_blank"><Download className="w-4 h-4" /></a>
                         </div>
                       )}
                       {moduleKey === "inventory" && (
                         <div className="flex justify-end gap-2">
+                          <button title="Editar insumo" onClick={() => openEditInventory(item)} className="p-2 text-zinc-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg"><Pencil className="w-4 h-4" /></button>
                           <button onClick={() => openMovement(item, "IN")} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded">Entrada</button>
                           <button onClick={() => openMovement(item, "OUT")} className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded">Salida</button>
                           <button onClick={() => openMovement(item, "ADJUST")} className="px-2 py-1 text-xs bg-zinc-100 text-zinc-700 rounded">Ajuste</button>
+                          <button title="Inactivar insumo" onClick={() => removeInventory(item)} className="p-2 text-zinc-400 hover:text-red-600 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
                         </div>
                       )}
                       {moduleKey === "fiscal-ranges" && (
@@ -292,13 +364,13 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-xl overflow-hidden">
             <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50">
-              <h2 className="text-xl font-bold text-zinc-900">Nuevo registro</h2>
-              <button onClick={() => setModalOpen(false)} className="text-zinc-400 hover:text-zinc-600"><X className="w-6 h-6" /></button>
+              <h2 className="text-xl font-bold text-zinc-900">{editingItem ? "Editar registro" : "Nuevo registro"}</h2>
+              <button onClick={() => { setModalOpen(false); setEditingItem(null); }} className="text-zinc-400 hover:text-zinc-600"><X className="w-6 h-6" /></button>
             </div>
             <form onSubmit={submit} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
               <ModuleForm moduleKey={moduleKey} form={form} setForm={setForm} lookups={lookups} />
               <div className="md:col-span-2 flex justify-end gap-3 mt-4">
-                <button type="button" onClick={() => setModalOpen(false)} className="px-4 py-2 text-zinc-600 hover:bg-zinc-100 rounded-lg">Cancelar</button>
+                <button type="button" onClick={() => { setModalOpen(false); setEditingItem(null); }} className="px-4 py-2 text-zinc-600 hover:bg-zinc-100 rounded-lg">Cancelar</button>
                 <button type="submit" className="px-6 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 font-bold">Guardar</button>
               </div>
             </form>
@@ -337,6 +409,10 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
             </form>
           </div>
         </div>
+      )}
+
+      {detailItem && (
+        <DetailModal moduleKey={moduleKey} item={detailItem} onClose={() => setDetailItem(null)} onDownloadInvoice={downloadInvoice} onCancelPayment={cancelPayment} />
       )}
     </div>
   );
@@ -418,89 +494,6 @@ function DoctorPicker({ form, setForm, doctors }: any) {
         ))}
       </div>
     </div>
-  );
-}
-
-function BillingForm({ form, setForm, lookups, patientSelect }: any) {
-  const selectedProcedures = form.clinicalProcedureIds || [];
-  const inventoryItems = form.inventoryItems || [];
-  const procedureOptions = (lookups.clinicalProcedures || []).filter((procedure: any) => !form.patientId || procedure.patientId === form.patientId);
-
-  const toggleProcedure = (id: string) => {
-    setForm({
-      ...form,
-      clinicalProcedureIds: selectedProcedures.includes(id)
-        ? selectedProcedures.filter((item: string) => item !== id)
-        : [...selectedProcedures, id],
-    });
-  };
-
-  const addInventoryLine = () => {
-    const first = lookups.inventoryItems?.[0];
-    setForm({
-      ...form,
-      inventoryItems: [
-        ...inventoryItems,
-        { inventoryItemId: first?.id || "", quantity: 1, unitPrice: first?.unitPrice || 0, taxable: first?.taxable ?? true },
-      ],
-    });
-  };
-
-  const updateInventoryLine = (index: number, patch: any) => {
-    const next = inventoryItems.map((item: any, itemIndex: number) => itemIndex === index ? { ...item, ...patch } : item);
-    setForm({ ...form, inventoryItems: next });
-  };
-
-  const removeInventoryLine = (index: number) => {
-    setForm({ ...form, inventoryItems: inventoryItems.filter((_: any, itemIndex: number) => itemIndex !== index) });
-  };
-
-  return (
-    <>
-      {patientSelect}
-      <Field label="Impuesto general">
-        <input className="w-full p-2 border rounded-lg" type="number" step="0.01" min="0" max="1" value={form.taxRate} onChange={(event) => setForm({ ...form, taxRate: Number(event.target.value) })} />
-      </Field>
-      <div className="md:col-span-2 space-y-2">
-        <label className="text-sm font-medium text-zinc-700">Procedimientos pendientes</label>
-        <div className="max-h-36 overflow-auto border rounded-lg divide-y">
-          {procedureOptions.length === 0 ? <p className="p-3 text-sm text-zinc-400">No hay procedimientos pendientes para este paciente.</p> : procedureOptions.map((procedure: any) => (
-            <label key={procedure.id} className="flex items-center gap-3 p-3 text-sm">
-              <input type="checkbox" checked={selectedProcedures.includes(procedure.id)} onChange={() => toggleProcedure(procedure.id)} />
-              <span className="font-mono text-xs text-emerald-700">{procedure.procedureCode}</span>
-              <span className="flex-1">{procedure.procedureName} - {procedure.patient.firstName} {procedure.patient.lastName}</span>
-              <span className="font-semibold">${Number(procedure.price || 0).toFixed(2)}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-      <div className="md:col-span-2 space-y-3">
-        <div className="flex items-center justify-between">
-          <label className="text-sm font-medium text-zinc-700">Inventario facturable</label>
-          <button type="button" onClick={addInventoryLine} className="px-3 py-1 text-sm bg-zinc-900 text-white rounded-lg">Agregar insumo</button>
-        </div>
-        {inventoryItems.map((line: any, index: number) => {
-          const selected = lookups.inventoryItems.find((item: any) => item.id === line.inventoryItemId);
-          return (
-            <div key={index} className="grid grid-cols-1 md:grid-cols-5 gap-2 p-3 border rounded-lg">
-              <select className="p-2 border rounded-lg md:col-span-2" value={line.inventoryItemId} onChange={(event) => {
-                const item = lookups.inventoryItems.find((entry: any) => entry.id === event.target.value);
-                updateInventoryLine(index, { inventoryItemId: event.target.value, unitPrice: item?.unitPrice || 0, taxable: item?.taxable ?? true });
-              }}>
-                <option value="">Seleccionar insumo...</option>
-                {lookups.inventoryItems.map((item: any) => <option key={item.id} value={item.id}>{item.name} ({item.quantityAvailable} {item.unitOfMeasure})</option>)}
-              </select>
-              <input className="p-2 border rounded-lg" type="number" min="1" max={selected?.quantityAvailable || undefined} value={line.quantity} onChange={(event) => updateInventoryLine(index, { quantity: Number(event.target.value) })} />
-              <input className="p-2 border rounded-lg" type="number" min="0" step="0.01" value={line.unitPrice} onChange={(event) => updateInventoryLine(index, { unitPrice: Number(event.target.value) })} />
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={Boolean(line.taxable)} onChange={(event) => updateInventoryLine(index, { taxable: event.target.checked })} /> Imp.</label>
-                <button type="button" onClick={() => removeInventoryLine(index)} className="ml-auto p-2 text-red-500 hover:bg-red-50 rounded-lg"><Trash2 className="w-4 h-4" /></button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </>
   );
 }
 
