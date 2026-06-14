@@ -68,7 +68,9 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
+  const [movementModal, setMovementModal] = useState<any>(null);
   const [form, setForm] = useState<any>(emptyForms[moduleKey]);
+  const [movementForm, setMovementForm] = useState({ movementType: "IN", quantity: 1, reason: "", reference: "", observations: "" });
   const [error, setError] = useState("");
 
   const loadData = async () => {
@@ -173,16 +175,36 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
     loadData();
   };
 
-  const createMovement = async (id: string, movementType: "IN" | "OUT" | "ADJUST") => {
-    const quantity = Number(prompt("Cantidad") || "0");
-    if (!quantity) return;
-    await apiClient.post(`/inventory/${id}/movements`, { movementType, quantity, reason: movementType === "IN" ? "Entrada manual" : movementType === "OUT" ? "Salida manual" : "Ajuste manual" });
-    loadData();
+  const openMovement = (item: any, movementType: "IN" | "OUT" | "ADJUST") => {
+    setMovementModal(item);
+    setMovementForm({ movementType, quantity: 1, reason: "", reference: "", observations: "" });
+  };
+
+  const submitMovement = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!movementModal) return;
+    try {
+      await apiClient.post(`/inventory/${movementModal.id}/movements`, { ...movementForm, quantity: Number(movementForm.quantity) });
+      setMovementModal(null);
+      loadData();
+    } catch (err: any) {
+      setError(err.message);
+    }
   };
 
   const downloadInvoice = async (item: any) => {
     try {
       await apiClient.download(`/billing/${item.id}/pdf`, `${item.fiscalNumber || item.invoiceNumber}.pdf`);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
+  const updateFiscalStatus = async (item: any, status: string) => {
+    if (!confirm(`Cambiar estado del rango ${item.cai} a ${status}?`)) return;
+    try {
+      await apiClient.patch(`/fiscal-ranges/${item.id}/status`, { status });
+      loadData();
     } catch (err: any) {
       setError(err.message);
     }
@@ -246,9 +268,15 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
                       )}
                       {moduleKey === "inventory" && (
                         <div className="flex justify-end gap-2">
-                          <button onClick={() => createMovement(item.id, "IN")} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded">Entrada</button>
-                          <button onClick={() => createMovement(item.id, "OUT")} className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded">Salida</button>
-                          <button onClick={() => createMovement(item.id, "ADJUST")} className="px-2 py-1 text-xs bg-zinc-100 text-zinc-700 rounded">Ajuste</button>
+                          <button onClick={() => openMovement(item, "IN")} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded">Entrada</button>
+                          <button onClick={() => openMovement(item, "OUT")} className="px-2 py-1 text-xs bg-red-50 text-red-700 rounded">Salida</button>
+                          <button onClick={() => openMovement(item, "ADJUST")} className="px-2 py-1 text-xs bg-zinc-100 text-zinc-700 rounded">Ajuste</button>
+                        </div>
+                      )}
+                      {moduleKey === "fiscal-ranges" && (
+                        <div className="flex justify-end gap-2">
+                          {item.status !== "ACTIVE" && <button onClick={() => updateFiscalStatus(item, "ACTIVE")} className="px-2 py-1 text-xs bg-emerald-50 text-emerald-700 rounded">Activar</button>}
+                          {item.status === "ACTIVE" && <button onClick={() => updateFiscalStatus(item, "INACTIVE")} className="px-2 py-1 text-xs bg-zinc-100 text-zinc-700 rounded">Inactivar</button>}
                         </div>
                       )}
                     </td>
@@ -277,6 +305,39 @@ export const IntegratedModulePage: React.FC<{ moduleKey: ModuleKey }> = ({ modul
           </div>
         </div>
       )}
+
+      {movementModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-lg shadow-xl overflow-hidden">
+            <div className="p-6 border-b border-zinc-100 flex justify-between items-center bg-zinc-50">
+              <div>
+                <p className="font-mono text-sm text-emerald-700">{movementModal.inventoryCode || "-"}</p>
+                <h2 className="text-xl font-bold text-zinc-900">{movementModal.name}</h2>
+              </div>
+              <button onClick={() => setMovementModal(null)} className="text-zinc-400 hover:text-zinc-600"><X className="w-6 h-6" /></button>
+            </div>
+            <form onSubmit={submitMovement} className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Tipo movimiento">
+                <select className="w-full p-2 border rounded-lg" value={movementForm.movementType} onChange={(event) => setMovementForm({ ...movementForm, movementType: event.target.value })}>
+                  <option value="IN">Entrada</option>
+                  <option value="OUT">Salida</option>
+                  <option value="ADJUST">Ajuste</option>
+                </select>
+              </Field>
+              <Field label="Stock actual"><input readOnly className="w-full p-2 border rounded-lg bg-zinc-50" value={movementModal.quantityAvailable} /></Field>
+              <Field label="Cantidad"><input type="number" min="1" className="w-full p-2 border rounded-lg" value={movementForm.quantity} onChange={(event) => setMovementForm({ ...movementForm, quantity: Number(event.target.value) })} /></Field>
+              <Field label="Nuevo stock"><input readOnly className="w-full p-2 border rounded-lg bg-zinc-50" value={movementForm.movementType === "IN" ? movementModal.quantityAvailable + Number(movementForm.quantity || 0) : movementForm.movementType === "OUT" ? movementModal.quantityAvailable - Number(movementForm.quantity || 0) : Number(movementForm.quantity || 0)} /></Field>
+              <Field label="Motivo"><input required className="w-full p-2 border rounded-lg" value={movementForm.reason} onChange={(event) => setMovementForm({ ...movementForm, reason: event.target.value })} /></Field>
+              <Field label="Referencia"><input className="w-full p-2 border rounded-lg" value={movementForm.reference} onChange={(event) => setMovementForm({ ...movementForm, reference: event.target.value })} /></Field>
+              <div className="md:col-span-2"><Field label="Observaciones"><textarea className="w-full p-2 border rounded-lg" value={movementForm.observations} onChange={(event) => setMovementForm({ ...movementForm, observations: event.target.value })} /></Field></div>
+              <div className="md:col-span-2 flex justify-end gap-3">
+                <button type="button" onClick={() => setMovementModal(null)} className="px-4 py-2 text-zinc-600 hover:bg-zinc-100 rounded-lg">Cancelar</button>
+                <button type="submit" className="px-6 py-2 bg-emerald-600 text-white rounded-lg font-bold">Registrar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -294,13 +355,19 @@ function ModuleForm({ moduleKey, form, setForm, lookups }: any) {
   const doctorSelect = <SelectField label="Odontologo" value={form.odontologistId || ""} onChange={(value) => setForm({ ...form, odontologistId: value })} options={lookups.doctors.map((d: any) => ({ value: d.id, label: `Dr. ${d.firstName} ${d.lastName}` }))} required={false} />;
   const invoiceSelect = <SelectField label="Factura pendiente" value={form.invoiceId || ""} onChange={(value) => {
     const invoice = lookups.invoices.find((item: any) => item.id === value);
-    setForm({ ...form, invoiceId: value, amount: invoice ? Number(invoice.total || 0) : form.amount });
-  }} options={lookups.invoices.filter((i: any) => i.status !== "PAID").map((i: any) => ({ value: i.id, label: `${i.fiscalNumber || i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - $${i.total}` }))} />;
+    const paid = invoice?.payments?.filter((payment: any) => payment.status !== "CANCELLED").reduce((sum: number, payment: any) => sum + payment.amount, 0) || 0;
+    const balance = invoice ? Math.max(Number(invoice.total || 0) - paid, 0) : form.amount;
+    setForm({ ...form, invoiceId: value, amount: Number(balance.toFixed(2)) });
+  }} options={lookups.invoices.filter((i: any) => i.status !== "PAID").map((i: any) => {
+    const paid = i.payments?.filter((payment: any) => payment.status !== "CANCELLED").reduce((sum: number, payment: any) => sum + payment.amount, 0) || 0;
+    const balance = Math.max(Number(i.total || 0) - paid, 0);
+    return { value: i.id, label: `${i.fiscalNumber || i.invoiceNumber} - ${i.patient.firstName} ${i.patient.lastName} - Saldo $${balance.toFixed(2)}` };
+  })} />;
 
   if (moduleKey === "clinical-history") return <>{patientSelect}{doctorSelect}{input("date", "Fecha", "date")}{textarea("reason", "Motivo de consulta")}{textarea("diagnosis", "Diagnostico")}{textarea("treatmentPerformed", "Tratamiento")}{textarea("observations", "Observaciones")}<ProcedurePicker form={form} setForm={setForm} procedures={lookups.procedureTypes || []} /></>;
   if (moduleKey === "clinical-files") return <>{patientSelect}<Field label="Archivo PDF/JPG/PNG"><input required type="file" accept=".pdf,.jpg,.jpeg,.png" className="w-full p-2 border rounded-lg" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] })} /></Field><div className="md:col-span-2 text-sm text-zinc-500 flex gap-2"><Upload className="w-4 h-4" /> El archivo se guarda en almacenamiento local y la metadata en Prisma.</div></>;
   if (moduleKey === "billing") return <BillingForm form={form} setForm={setForm} lookups={lookups} patientSelect={patientSelect} />;
-  if (moduleKey === "payments") return <>{invoiceSelect}{input("amount", "Monto", "number")}<SelectField label="Metodo de pago" value={form.paymentMethod} onChange={(value) => setForm({ ...form, paymentMethod: value })} options={["Efectivo", "Transferencia", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"].map((value) => ({ value, label: value }))} />{input("reference", "Referencia o autorizacion")}{input("processor", "Procesador/app")}</>;
+  if (moduleKey === "payments") return <>{invoiceSelect}{input("amount", "Monto a pagar", "number")}<SelectField label="Metodo de pago" value={form.paymentMethod} onChange={(value) => setForm({ ...form, paymentMethod: value })} options={["Efectivo", "Tarjeta", "Transferencia", "POS", "Billetera digital", "Otro"].map((value) => ({ value, label: value }))} />{input("reference", "Referencia externa (opcional)")}{input("processor", "Procesador/app")}</>;
   if (moduleKey === "inventory") return <>{input("name", "Insumo")}{input("unitOfMeasure", "Unidad")}{input("quantityAvailable", "Stock inicial", "number")}{input("minimumStock", "Stock minimo", "number")}{input("unitPrice", "Precio de venta", "number")}<Field label="Aplica impuesto"><label className="flex items-center gap-2 p-2 border rounded-lg"><input type="checkbox" checked={Boolean(form.taxable)} onChange={(event) => setForm({ ...form, taxable: event.target.checked })} /> Si</label></Field>{textarea("description", "Descripcion")}</>;
   if (moduleKey === "consents") return <>{patientSelect}<SelectField label="Procedimiento" value={form.procedureLogId || ""} onChange={(value) => setForm({ ...form, procedureLogId: value })} options={(lookups.procedureLogs || []).filter((log: any) => !form.patientId || log.patientId === form.patientId).map((log: any) => ({ value: log.id, label: `${log.procedureType.name} - ${log.patient.firstName} ${log.patient.lastName}` }))} required={false} /><SelectField label="Tipo consentimiento" value={form.consentType} onChange={(value) => setForm({ ...form, consentType: value })} options={["Tratamiento", "Cirugia", "Radiografia", "Anestesia", "Otro"].map((value) => ({ value, label: value }))} />{textarea("description", "Texto del consentimiento")}{input("signerName", "Nombre del firmante")}{input("relationship", "Parentesco o relacion")}{textarea("observations", "Observaciones")}<Field label="Archivo escaneado"><input type="file" accept=".pdf,.jpg,.jpeg,.png" className="w-full p-2 border rounded-lg" onChange={(event) => setForm({ ...form, file: event.target.files?.[0] || null })} /></Field></>;
   if (moduleKey === "notifications") return <>{input("type", "Tipo")}{textarea("message", "Mensaje")}</>;
@@ -470,7 +537,7 @@ function headersFor(moduleKey: ModuleKey) {
     "clinical-files": ["Fecha", "Paciente", "Archivo", "Tipo"],
     billing: ["Factura", "Paciente", "Lineas", "Subtotal", "Impuesto", "Total", "Estado"],
     payments: ["Fecha", "Factura", "Paciente", "Monto", "Metodo"],
-    inventory: ["Insumo", "Stock", "Minimo", "Unidad", "Precio", "Impuesto"],
+    inventory: ["Codigo", "Insumo", "Stock", "Minimo", "Unidad", "Precio", "Impuesto"],
     consents: ["Fecha", "Paciente", "Procedimiento", "Estado"],
     audit: ["Fecha", "Usuario", "Accion", "Entidad", "IP"],
     reports: [],
@@ -490,7 +557,7 @@ function cellsFor(moduleKey: ModuleKey, item: any) {
     "clinical-files": [formatDate(item.uploadedAt), patient, item.fileName, item.fileType],
     billing: [item.fiscalNumber || item.invoiceNumber, patient, item.items?.length || item.procedureLogs?.length || 0, money(item.subtotal), money(item.tax), money(item.total), item.status],
     payments: [formatDate(item.paymentDate), item.invoice?.invoiceNumber, invoicePatient, money(item.amount), item.paymentMethod],
-    inventory: [item.name, item.quantityAvailable <= item.minimumStock ? `${item.quantityAvailable} (bajo)` : item.quantityAvailable, item.minimumStock, item.unitOfMeasure, money(item.unitPrice), item.taxable ? "Si" : "No"],
+    inventory: [item.inventoryCode || "-", item.name, item.quantityAvailable <= item.minimumStock ? `${item.quantityAvailable} (bajo)` : item.quantityAvailable, item.minimumStock, item.unitOfMeasure, money(item.unitPrice), item.taxable ? "Si" : "No"],
     consents: [formatDate(item.signedAt), patient, item.procedureLog?.procedureType?.name || "-", item.signerName ? `${item.status} - ${item.signerName}` : item.status],
     audit: [formatDate(item.timestamp), item.user ? `${item.user.firstName} ${item.user.lastName}` : "Sistema", item.action, item.entity, item.ipAddress || "-"],
     reports: [],

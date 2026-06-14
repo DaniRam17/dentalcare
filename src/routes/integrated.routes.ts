@@ -53,8 +53,8 @@ router.get("/lookups", authenticate, async (_req, res, next) => {
         orderBy: { performedAt: "desc" },
         include: { patient: { select: { firstName: true, lastName: true, patientCode: true, documentNumber: true } }, procedureType: true },
       }),
-      prisma.inventoryItem.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, quantityAvailable: true, minimumStock: true, unitOfMeasure: true, unitPrice: true, taxable: true } }),
-      prisma.invoice.findMany({ orderBy: { issueDate: "desc" }, select: { id: true, invoiceNumber: true, fiscalNumber: true, total: true, status: true, patient: { select: { firstName: true, lastName: true } } } }),
+      prisma.inventoryItem.findMany({ where: { isActive: true }, orderBy: { name: "asc" }, select: { id: true, inventoryCode: true, name: true, quantityAvailable: true, minimumStock: true, unitOfMeasure: true, unitPrice: true, taxable: true } }),
+      prisma.invoice.findMany({ where: { status: { in: ["PENDING", "PARTIAL"] } }, orderBy: { issueDate: "desc" }, select: { id: true, invoiceNumber: true, fiscalNumber: true, total: true, status: true, payments: true, patient: { select: { firstName: true, lastName: true } } } }),
       prisma.fiscalDocumentRange.findMany({ where: { status: "ACTIVE" }, orderBy: { emissionDeadline: "asc" } }),
     ]);
     res.json({ patients, doctors, procedureTypes, procedureLogs, clinicalProcedures, inventoryItems, invoices, fiscalRanges });
@@ -482,14 +482,18 @@ router.post("/payments", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), asy
     const body = z.object({
       invoiceId: uuid,
       amount: z.number().positive(),
-      paymentMethod: z.enum(["Efectivo", "Transferencia", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"]),
+      paymentMethod: z.enum(["Efectivo", "Tarjeta", "Transferencia", "POS", "Billetera digital", "Otro", "Tarjeta de credito", "Tarjeta de debito", "App de pagos"]),
       reference: z.string().optional().nullable(),
       processor: z.string().optional().nullable(),
     }).parse(req.body);
     const payment = await prisma.$transaction(async (tx) => {
-      const created = await tx.payment.create({ data: { ...body, status: "PAID" } });
       const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: body.invoiceId }, include: { payments: true } });
-      const paid = invoice.payments.reduce((sum, item) => sum + item.amount, 0);
+      const paidBefore = invoice.payments.filter((item) => item.status !== "CANCELLED").reduce((sum, item) => sum + item.amount, 0);
+      const balance = Number((invoice.total - paidBefore).toFixed(2));
+      if (body.amount > balance) throw new Error(`El pago excede el saldo pendiente (${formatMoney(balance)})`);
+      const reference = body.reference || await nextPaymentReference(tx);
+      const created = await tx.payment.create({ data: { ...body, reference, status: "PAID" } });
+      const paid = paidBefore + created.amount;
       await tx.invoice.update({ where: { id: body.invoiceId }, data: { status: paid >= invoice.total ? "PAID" : paid > 0 ? "PARTIAL" : "PENDING" } });
       return created;
     });
@@ -500,9 +504,26 @@ router.post("/payments", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), asy
   }
 });
 
+router.patch("/payments/:id/cancel", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), async (req: any, res, next) => {
+  try {
+    const body = z.object({ reason: z.string().min(3) }).parse(req.body);
+    const result = await prisma.$transaction(async (tx) => {
+      const payment = await tx.payment.update({ where: { id: req.params.id }, data: { status: "CANCELLED", cancellationReason: body.reason, cancelledAt: new Date() } });
+      const invoice = await tx.invoice.findUniqueOrThrow({ where: { id: payment.invoiceId }, include: { payments: true } });
+      const paid = invoice.payments.filter((item) => item.id !== payment.id && item.status !== "CANCELLED").reduce((sum, item) => sum + item.amount, 0);
+      await tx.invoice.update({ where: { id: invoice.id }, data: { status: paid >= invoice.total ? "PAID" : paid > 0 ? "PARTIAL" : "PENDING" } });
+      return payment;
+    });
+    await audit(req, "CANCEL", "Payment", result.id, undefined, result);
+    res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.get("/inventory", authenticate, async (_req, res, next) => {
   try {
-    const items = await prisma.inventoryItem.findMany({ include: { movements: { orderBy: { movementDate: "desc" }, take: 5 }, procedures: { include: { procedureType: true } } }, orderBy: { name: "asc" } });
+    const items = await prisma.inventoryItem.findMany({ where: { isActive: true }, include: { movements: { orderBy: { movementDate: "desc" }, take: 8 }, procedures: { include: { procedureType: true } } }, orderBy: { name: "asc" } });
     res.json(items);
   } catch (error) {
     next(error);
@@ -512,7 +533,8 @@ router.get("/inventory", authenticate, async (_req, res, next) => {
 router.post("/inventory", authenticate, authorize(["ADMIN"]), async (req: any, res, next) => {
   try {
     const body = z.object({ name: z.string().min(2), description: z.string().optional().nullable(), quantityAvailable: z.number().int().default(0), minimumStock: z.number().int().default(0), unitOfMeasure: z.string().min(1), unitPrice: z.number().nonnegative().default(0), taxable: z.boolean().default(true) }).parse(req.body);
-    const item = await prisma.inventoryItem.create({ data: body });
+    const inventoryCode = await nextInventoryCode();
+    const item = await prisma.inventoryItem.create({ data: { ...body, inventoryCode } });
     await audit(req, "CREATE", "InventoryItem", item.id, undefined, item);
     res.status(201).json(item);
   } catch (error) {
@@ -522,12 +544,12 @@ router.post("/inventory", authenticate, authorize(["ADMIN"]), async (req: any, r
 
 router.post("/inventory/:id/movements", authenticate, authorize(["ADMIN", "DOCTOR"]), async (req: any, res, next) => {
   try {
-    const body = z.object({ movementType: z.enum(["IN", "OUT", "ADJUST"]), quantity: z.number().int().positive(), reason: z.string().optional().nullable() }).parse(req.body);
+    const body = z.object({ movementType: z.enum(["IN", "OUT", "ADJUST"]), quantity: z.number().int().positive(), reason: z.string().optional().nullable(), reference: z.string().optional().nullable(), observations: z.string().optional().nullable() }).parse(req.body);
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.inventoryItem.findUniqueOrThrow({ where: { id: req.params.id } });
       const nextQuantity = body.movementType === "IN" ? item.quantityAvailable + body.quantity : body.movementType === "OUT" ? item.quantityAvailable - body.quantity : body.quantity;
       if (nextQuantity < 0) throw new Error("Stock insuficiente");
-      const movement = await tx.inventoryMovement.create({ data: { inventoryItemId: item.id, ...body } });
+      const movement = await tx.inventoryMovement.create({ data: { inventoryItemId: item.id, ...body, stockBefore: item.quantityAvailable, stockAfter: nextQuantity, userId: req.user?.id } });
       const updated = await tx.inventoryItem.update({ where: { id: item.id }, data: { quantityAvailable: nextQuantity } });
       if (updated.quantityAvailable <= updated.minimumStock) {
         await tx.notification.create({ data: { type: "INVENTORY_ALERT", message: `Stock bajo: ${updated.name}`, status: "PENDING" } });
@@ -741,6 +763,28 @@ async function nextInvoiceCode(tx: any) {
   });
   const next = Number(last?.invoiceCode?.replace("FAC-", "") || "0") + 1;
   return `FAC-${String(next).padStart(6, "0")}`;
+}
+
+async function nextPaymentReference(tx: any) {
+  const last = await tx.payment.findFirst({
+    where: { reference: { startsWith: "PAY-" } },
+    orderBy: { paymentDate: "desc" },
+    select: { reference: true },
+  });
+  const today = new Date();
+  const stamp = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+  const lastNumber = last?.reference?.includes(stamp) ? Number(last.reference.split("-").pop() || "0") : 0;
+  return `PAY-${stamp}-${String(lastNumber + 1).padStart(6, "0")}`;
+}
+
+async function nextInventoryCode() {
+  const last = await prisma.inventoryItem.findFirst({
+    where: { inventoryCode: { not: null } },
+    orderBy: { inventoryCode: "desc" },
+    select: { inventoryCode: true },
+  });
+  const next = Number(last?.inventoryCode?.replace("INV-", "") || "0") + 1;
+  return `INV-${String(next).padStart(6, "0")}`;
 }
 
 function formatFiscalNumber(range: any, number: number) {

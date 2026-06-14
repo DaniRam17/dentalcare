@@ -426,6 +426,8 @@ model Payment {
   reference      String?
   processor      String?
   status        String   @default("PAID")
+  cancellationReason String?
+  cancelledAt   DateTime?
 
   invoiceId     String
   invoice       Invoice @relation(fields: [invoiceId], references: [id])
@@ -433,6 +435,7 @@ model Payment {
 
 model InventoryItem {
   id                String @id @default(uuid())
+  inventoryCode     String? @unique
   name              String @unique
   description       String?
   quantityAvailable Int    @default(0)
@@ -440,6 +443,7 @@ model InventoryItem {
   unitOfMeasure     String
   unitPrice         Float   @default(0)
   taxable           Boolean @default(true)
+  isActive          Boolean @default(true)
 
   movements         InventoryMovement[]
   procedures        ProcedureSupply[]
@@ -450,8 +454,13 @@ model InventoryMovement {
   id            String   @id @default(uuid())
   movementType  String
   quantity      Int
+  stockBefore   Int?
+  stockAfter    Int?
   movementDate  DateTime @default(now())
   reason        String?
+  reference     String?
+  observations  String?
+  userId        String?
 
   inventoryItemId String
   inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
