@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { LogIn, ShieldCheck } from 'lucide-react';
 
 export const Login: React.FC = () => {
@@ -73,6 +73,13 @@ export const Login: React.FC = () => {
             <LogIn className="w-4 h-4" />
             Entrar
           </button>
+
+          <p className="text-center text-sm text-zinc-500">
+            ¿No tienes cuenta?{' '}
+            <Link to="/register" className="text-emerald-600 hover:underline font-medium">
+              Regístrate
+            </Link>
+          </p>
         </form>
       </div>
     </div>

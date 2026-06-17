@@ -18,7 +18,7 @@ const prescriptionSchema = z.object({
   })).min(1),
 });
 
-router.get("/", authenticate, async (req, res, next) => {
+router.get("/", authenticate, authorize(["ADMIN", "DOCTOR", "RECEPTIONIST", "NURSE"]), async (req, res, next) => {
   try {
     const { patientId } = req.query;
     const where: any = { isActive: true };

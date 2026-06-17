@@ -2,7 +2,11 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import prisma from "../lib/prisma";
 
-const JWT_SECRET = process.env.JWT_SECRET || "super-secret-key";
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("FATAL: JWT_SECRET environment variable is not set. Using fallback for development only.");
+}
+const SECRET = JWT_SECRET || "dev-only-secret-change-in-production";
 
 export const authenticate = async (req: any, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
@@ -10,7 +14,7 @@ export const authenticate = async (req: any, res: Response, next: NextFunction) 
 
   const token = authHeader.split(" ")[1];
   try {
-    const decoded: any = jwt.verify(token, JWT_SECRET);
+    const decoded: any = jwt.verify(token, SECRET);
     const user = await prisma.employee.findUnique({ where: { id: decoded.id } });
     
     if (!user || !user.isActive) {

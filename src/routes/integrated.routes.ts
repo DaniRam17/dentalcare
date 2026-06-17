@@ -3,6 +3,7 @@ import fs from "fs";
 import multer from "multer";
 import path from "path";
 import prisma from "../lib/prisma";
+import { Prisma } from "@prisma/client";
 import { authenticate, authorize } from "../middlewares/auth";
 import { logAudit } from "../services/auditService";
 import { createConsentPdf, createInvoicePdf } from "../services/pdfService";
@@ -457,7 +458,7 @@ router.post("/billing", authenticate, authorize(["ADMIN", "RECEPTIONIST"]), asyn
         });
       }
       return created;
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     await audit(req, "CREATE", "Invoice", invoice.id, undefined, invoice);
     res.status(201).json(invoice);
   } catch (error) {
